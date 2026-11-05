@@ -1,0 +1,10 @@
+{
+	"key.realwayfinder.toggle": "Realwayfinder Toggle",
+	"key.realwayfinder.bias": "Realwayfinder setup",
+	"key.realwayfinder.scan": "Realwayfinder scan / stop",
+	"key.realwayfinder.record": "Realwayfinder record scan",
+	"key.realwayfinder.skip": "Realwayfinder skip scan point",
+	"key.realwayfinder.reset": "Realwayfinder reset path",
+	"key.category.realwayfinder.main": "Realwayfinder",
+	"keys.category.realwayfinder.main": "Realwayfinder"
+}

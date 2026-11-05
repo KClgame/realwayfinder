@@ -1,0 +1,10 @@
+{
+	"key.realwayfinder.toggle": "Realwayfinder 开关",
+	"key.realwayfinder.bias": "Realwayfinder 配置",
+	"key.realwayfinder.scan": "Realwayfinder 扫点 / 中断",
+	"key.realwayfinder.record": "Realwayfinder 录制扫点",
+	"key.realwayfinder.skip": "Realwayfinder 跳过扫点",
+	"key.realwayfinder.reset": "Realwayfinder 重置寻路",
+	"key.category.realwayfinder.main": "Realwayfinder",
+	"keys.category.realwayfinder.main": "Realwayfinder"
+}

@@ -1,0 +1,5 @@
+Baritone 26.2
+Source: https://github.com/cabaletta/baritone/tree/26.2
+Commit: 9fadf7cf95293d7f6678981e77a939b4a7978373
+License: LGPL-3.0 (see third_party/baritone/LICENSE)
+These sources are compiled into realwayfinder.jar. Do not also install a separate Baritone mod.

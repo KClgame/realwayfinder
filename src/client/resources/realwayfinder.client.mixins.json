@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"package": "kcl.realwayfinder.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"ContainerClickMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

@@ -1,0 +1,51 @@
+{
+	"schemaVersion": 1,
+	"id": "realwayfinder",
+	"version": "${version}",
+	"name": "Realwayfinder",
+	"description": "Spot selection, scanning, and casting. Walking is Baritone 26.2 (LGPL-3.0, https://github.com/cabaletta/baritone), compiled from commit 9fadf7cf into this jar.",
+	"authors": [
+		"KCl"
+	],
+	"contact": {},
+	"license": "CC0-1.0",
+	"icon": "assets/realwayfinder/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "kcl.realwayfinder.Realwayfinder",
+				"adapter": "kotlin"
+			}
+		],
+		"client": [
+			{
+				"value": "kcl.realwayfinder.client.RealwayfinderClient",
+				"adapter": "kotlin"
+			}
+		]
+	},
+	"mixins": [
+		"realwayfinder.mixins.json",
+		{
+			"config": "realwayfinder.client.mixins.json",
+			"environment": "client"
+		},
+		{
+			"config": "mixins.baritone.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*",
+		"fabric-language-kotlin": "*",
+		"spotfilter": "*",
+		"kcl-utils": "*"
+	},
+	"conflicts": {
+		"baritone": "*"
+	}
+}
