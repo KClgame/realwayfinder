@@ -97,6 +97,9 @@ object RoutePlanner {
 		val here = FishingWorld.current
 			?: return emptyPlan("不在钓鱼岛")
 		val grotto = here.kind == SpotKind.GROTTO
+		if (grotto && kcl.realwayfinder.nav.grottoNeedsScan(here.shortId, RouteSettings.scanned, IslandCycle.armedScan)) {
+			return emptyPlan("扫点未完成")
+		}
 		if (!grotto) {
 			val hold = islandHold(here)
 			if (hold != null) return emptyPlan(hold)
@@ -461,6 +464,9 @@ object RoutePlanner {
 	fun chooseFish(level: ClientLevel, player: Player): PlannedRoute {
 		val here = FishingWorld.current ?: return emptyPlan("不在钓鱼岛")
 		val grotto = here.kind == SpotKind.GROTTO
+		if (grotto && kcl.realwayfinder.nav.grottoNeedsScan(here.shortId, RouteSettings.scanned, IslandCycle.armedScan)) {
+			return emptyPlan("扫点未完成")
+		}
 		if (!grotto) {
 			val hold = islandHold(here)
 			if (hold != null) return emptyPlan(hold)
@@ -668,6 +674,15 @@ object RoutePlanner {
 	fun requestFish(level: ClientLevel, player: Player) {
 		val here = FishingWorld.current ?: return
 		val grotto = here.kind == SpotKind.GROTTO
+		if (grotto && kcl.realwayfinder.nav.grottoNeedsScan(here.shortId, RouteSettings.scanned, IslandCycle.armedScan)) {
+			val key = "f:wait:扫点未完成"
+			if (jobKey == key) return
+			jobKey = key
+			job = Job.Empty("扫点未完成")
+			fill = null
+			held = null
+			return
+		}
 		if (!grotto) {
 			val hold = islandHold(here)
 			if (hold != null) {

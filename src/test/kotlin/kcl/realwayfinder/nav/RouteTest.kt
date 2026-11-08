@@ -127,6 +127,10 @@ class RouteTest {
 		assertTrue(!tropicalDiscovery("You've discovered a Temperate Grotto! Travel there through your navigator."))
 		assertTrue(grottoClosed("The grotto has closed."))
 		assertTrue(grottoClosed("The Temperate Grotto collapsed."))
+		assertTrue(grottoUnstable("Your Grotto has become unstable, teleporting you back to safety..."))
+		assertTrue(grottoUnstable("§cYour Grotto has become unstable, teleporting you back to safety..."))
+		assertTrue(!grottoUnstable("You've discovered a Temperate Grotto! Travel there through your navigator."))
+		assertTrue(!grottoClosed("Your Grotto has become unstable, teleporting you back to safety..."))
 		assertTrue(!grottoClosed("You've discovered a Temperate Grotto! Travel there through your navigator."))
 		assertTrue(!grottoClosed("SpotFilter: island spots refreshed"))
 		assertTrue(!temperateDiscovery("SpotFilter: island spots refreshed"))
@@ -589,6 +593,15 @@ class RouteTest {
 			pickIsland(order, setOf("I3", "I2", "I1"), setOf("I3", "I2"))
 		)
 		assertNull(pickIsland(order, setOf("I3", "I2", "I1"), setOf("I3", "I2", "I1")))
+	}
+
+	@Test
+	fun grottoFishingWaitsUntilThisVisitFinishesScan() {
+		assertTrue(grottoNeedsScan("Temperate", setOf("TEMPERATE"), null))
+		assertTrue(grottoNeedsScan("Temperate", setOf("TEMPERATE"), "I1"))
+		assertTrue(grottoNeedsScan("Temperate", emptySet(), "TEMPERATE"))
+		assertTrue(!grottoNeedsScan("Temperate", setOf("TEMPERATE"), "TEMPERATE"))
+		assertTrue(!grottoNeedsScan("tropical", setOf("TROPICAL"), "Tropical"))
 	}
 
 	@Test

@@ -15,3 +15,13 @@ fun pickIsland(order: List<String>, scanned: Set<String>, finished: Set<String>)
 	}
 	return null
 }
+
+/**
+ * Grotto scanned is only for the current visit. Fishing starts after this entry's scan finishes.
+ * Discovery text and "Your Grotto has become unstable..." clear that mark, and the next entry scans again.
+ */
+fun grottoNeedsScan(placeId: String, scanned: Set<String>, armedScan: String?): Boolean {
+	val id = placeId.uppercase()
+	val armed = armedScan?.equals(id, ignoreCase = true) == true
+	return !(armed && scanned.any { it.equals(id, ignoreCase = true) })
+}

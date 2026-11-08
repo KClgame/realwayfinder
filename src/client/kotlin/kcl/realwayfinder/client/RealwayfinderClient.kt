@@ -7,6 +7,7 @@ import kcl.realwayfinder.nav.BuiltInRoutes
 import kcl.realwayfinder.nav.IslandJob
 import kcl.realwayfinder.nav.lobbyScoreboard
 import kcl.realwayfinder.nav.perkName
+import kcl.realwayfinder.nav.grottoNeedsScan
 import kcl.realwayfinder.nav.pickIsland
 import kcl.realwayfinder.nav.travelDestination
 import kcl.realwayfinder.nav.CastSolution
@@ -19,6 +20,7 @@ import kcl.realwayfinder.nav.stuckCells
 import kcl.spotfilter.client.Hotkeys
 import kcl.spotfilter.client.data.SpotKind
 import kcl.realwayfinder.nav.grottoClosed
+import kcl.realwayfinder.nav.grottoUnstable
 import kcl.realwayfinder.nav.hubPrompt
 import kcl.realwayfinder.nav.hourlyClear
 
@@ -159,6 +161,15 @@ object RouteRuntime {
 		}
 		if (RouteSettings.enabled) followIslandCycle(FishingWorld.current)
 		if (phase != Phase.SEEK) return
+		val hereNow = FishingWorld.current
+		if (hereNow?.kind == SpotKind.GROTTO && grottoNeedsScan(hereNow.shortId, RouteSettings.scanned, IslandCycle.armedScan)) {
+			plan = null
+			fishPending = false
+			dock.clear()
+			BaritoneNav.stop()
+			runner.release(client)
+			return
+		}
 		if (!RouteSettings.enabled) {
 			plan = null
 				stillTicks = 0
@@ -390,13 +401,11 @@ object RouteRuntime {
 	}
 
 	fun discoverGrotto(grotto: FishingPlace) {
-		if (grotto == FishingPlace.GROTTO_TROPICAL) {
-			RouteSettings.clearScanned(grotto.shortId)
-			if (IslandCycle.armedScan.equals(grotto.shortId, ignoreCase = true)) IslandCycle.armedScan = null
-		}
+		forgetGrottoScan()
 		pendingGrotto = grotto
 		if (FishingWorld.current == grotto) {
-			startGrottoWork(grotto)
+			abandonGrotto = false
+			startGrottoWork(grotto, force = true)
 			return
 		}
 		RouteSettings.noteGrotto(grotto.climate.name)
@@ -406,6 +415,7 @@ object RouteRuntime {
 	}
 
 	fun onActionBar(text: String) {
+		if (grottoUnstable(text)) forgetUnstableGrotto()
 		if (!hubPrompt(text)) return
 		val now = System.currentTimeMillis()
 		if (now - lastHubMs < 5000) return
@@ -420,12 +430,12 @@ object RouteRuntime {
 
 	fun onChat(text: String) {
 		GrottoEntry.onChat(text)
+		if (grottoUnstable(text)) forgetUnstableGrotto()
 		if (grottoClosed(text)) {
-			RouteSettings.resetGrottoScanned()
+			forgetGrottoScan()
 			RouteSettings.noteGrotto("")
 			pendingGrotto = null
 			abandonGrotto = true
-			if (RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")) IslandCycle.armedScan = null
 			val next = pickIsland(IslandCycle.enabledOrder(), RouteSettings.scanned, RouteSettings.finished)
 			if (next != null) {
 				IslandCycle.duty = next.id
@@ -444,6 +454,38 @@ object RouteRuntime {
 		startIslandHour()
 	}
 
+	/** Discovery, collapse, and the unstable teleport all drop every grotto scanned mark. */
+	private fun forgetGrottoScan() {
+		RouteSettings.resetGrottoScanned()
+		if (RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")) IslandCycle.armedScan = null
+	}
+
+	/** Game is pulling the player out. Do not keep this visit's scan, and do not start another one here. */
+	private fun forgetUnstableGrotto() {
+		val scanning = phase == Phase.COVER || (phase == Phase.RING && ringGrotto)
+		val had = scanning || pendingGrotto != null ||
+			RouteSettings.scanned.any { RouteSettings.isGrottoScanId(it) } ||
+			RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")
+		forgetGrottoScan()
+		pendingGrotto = null
+		abandonGrotto = true
+		fishPending = false
+		if (scanning || ringGrotto) {
+			ring = emptyList()
+			ringRoute = null
+			grottoScan = null
+			heldScan = null
+			pausedCover = false
+			plan = null
+			phase = Phase.SEEK
+			BaritoneNav.stop()
+			runner.release(Minecraft.getInstance())
+		}
+		if (had) {
+			Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder Grotto 扫点已重置"))
+		}
+	}
+
 	private fun startIslandHour() {
 		val place = FishingWorld.current
 		RouteSettings.resetScanned()
@@ -454,8 +496,6 @@ object RouteRuntime {
 		if (place != null && place.kind == SpotKind.GROTTO) {
 			forcedDest = null
 			travelNow = false
-			val grottoId = place.shortId.uppercase()
-			if (grottoId in RouteSettings.scanned) IslandCycle.armedScan = grottoId
 			player?.sendSystemMessage(Component.literal("Realwayfinder 整点已重置，留在 Grotto"))
 			return
 		}
@@ -530,27 +570,24 @@ object RouteRuntime {
 		}
 	}
 
-	/** One cover plan per grotto visit. A grotto has no island ring, so this must not report a missing island scan. */
+	/** One cover plan per grotto visit. Fishing waits until that plan's ring finishes. */
 	private fun followGrotto(place: FishingPlace) {
-		if (phase != Phase.SEEK) return
-		if (IslandCycle.armedScan.equals(place.shortId, ignoreCase = true)) return
+		if (phase != Phase.SEEK || abandonGrotto) return
+		if (!grottoNeedsScan(place.shortId, RouteSettings.scanned, IslandCycle.armedScan)) return
 		startGrottoWork(place)
 	}
 
-	private fun startGrottoWork(place: FishingPlace) {
+	private fun startGrottoWork(place: FishingPlace, force: Boolean = false) {
 		val id = place.shortId.uppercase()
+		if (!force && (phase == Phase.COVER || (phase == Phase.RING && ringGrotto))) return
+		if (!force && !grottoNeedsScan(id, RouteSettings.scanned, IslandCycle.armedScan)) return
+		val player = Minecraft.getInstance().player ?: return
 		ring = emptyList()
 		ringRoute = null
 		grottoScan = null
 		pendingGrotto = place
 		abandonGrotto = false
-		if (id in RouteSettings.scanned) {
-			IslandCycle.armedScan = id
-			startGrottoFish()
-			fishPending = true
-			return
-		}
-		val player = Minecraft.getInstance().player ?: return
+		RouteSettings.clearScanned(id)
 		IslandCycle.armedScan = id
 		beginGrottoRoute(player)
 	}
@@ -627,8 +664,12 @@ object RouteRuntime {
 
 	private fun startScan(place: FishingPlace): Boolean {
 		if (place.kind == SpotKind.GROTTO) {
-			val who = Minecraft.getInstance().player
-			if (who != null) beginGrottoRoute(who) else startGrottoFish()
+			val who = Minecraft.getInstance().player ?: return false
+			val id = place.shortId.uppercase()
+			RouteSettings.clearScanned(id)
+			IslandCycle.armedScan = id
+			pendingGrotto = place
+			beginGrottoRoute(who)
 			return true
 		}
 		val builtIn = BuiltInRoutes.island(place.shortId)
@@ -777,12 +818,17 @@ object RouteRuntime {
 		stillTicks = 0
 		runner.clearRepeat()
 		player.sendSystemMessage(Component.literal("Realwayfinder 扫点结束"))
-		FishingWorld.current?.shortId?.let { RouteSettings.markScanned(it) }
 		if (ringGrotto) {
+			val id = FishingWorld.current?.shortId ?: pendingGrotto?.shortId
+			if (id != null) {
+				RouteSettings.markScanned(id)
+				IslandCycle.armedScan = id.uppercase()
+			}
 			startGrottoFish()
 			fishPending = true
 			return
 		}
+		FishingWorld.current?.shortId?.let { RouteSettings.markScanned(it) }
 		IslandCycle.job = IslandJob.FISH
 		IslandCycle.armedScan = null
 		phase = Phase.SEEK
@@ -933,9 +979,10 @@ object RouteRuntime {
 			}
 			if (resumeAfterSpawn) {
 				resumeAfterSpawn = false
-				resumeFishing(here)
+				if (here.kind == SpotKind.GROTTO) startGrottoWork(here, force = true)
+				else resumeFishing(here)
 			} else if (here.kind == SpotKind.GROTTO) {
-				startGrottoWork(here)
+				startGrottoWork(here, force = true)
 			} else if (here.shortId.equals(duty, ignoreCase = true)) {
 				startDutyWork(here)
 			}
