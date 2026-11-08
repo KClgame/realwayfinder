@@ -41,6 +41,14 @@ class Grid(
 	}
 
 	companion object {
+		/** Null when the product is not a positive array length. */
+		fun cellCount(sizeX: Int, sizeY: Int, sizeZ: Int): Int? {
+			if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return null
+			val volume = sizeX.toLong() * sizeY.toLong() * sizeZ.toLong()
+			if (volume <= 0L || volume > Int.MAX_VALUE) return null
+			return volume.toInt()
+		}
+
 		fun build(
 			originX: Int,
 			originY: Int,
@@ -50,7 +58,9 @@ class Grid(
 			sizeZ: Int,
 			fill: (Int, Int, Int) -> Cell
 		): Grid {
-			val cells = ByteArray(sizeX * sizeY * sizeZ)
+			val count = cellCount(sizeX, sizeY, sizeZ)
+				?: return Grid(originX, originY, originZ, 1, 1, 1, byteArrayOf(Cell.UNKNOWN.code))
+			val cells = ByteArray(count)
 			var i = 0
 			for (y in 0 until sizeY) {
 				for (z in 0 until sizeZ) {

@@ -223,8 +223,8 @@ public interface MovementHelper extends ActionCosts, Helper {
                 return false;
             }
 
-            // Standing body is 1.8 tall. The swimming pose (about 0.6) is not used,
-            // so a one-block water gap under a solid ceiling is not passable.
+            // Standing body is 1.8 tall. Two blocks above the surface is enough to stay up.
+            // Less than that is passable only by sinking, and only when the water is deep enough.
             BlockState up = bsi.get0(x, y + 1, z);
             if (up.getBlock() instanceof LilyPadBlock) {
                 return false;
@@ -233,8 +233,11 @@ public interface MovementHelper extends ActionCosts, Helper {
                 if (!Baritone.settings().allowDownwardSwim.value) {
                     return false;
                 }
-            } else if (canWalkThroughBlockState(up) != YES) {
-                return false;
+            } else {
+                double room = waterHeadroom(bsi, x, y, z);
+                if (!lowWaterPassable(room, waterDepth(bsi, x, y, z))) {
+                    return false;
+                }
             }
             return fluidState.getType() instanceof WaterFluid;
         }
@@ -383,7 +386,7 @@ public interface MovementHelper extends ActionCosts, Helper {
     static boolean avoidWalkingInto(BlockState state) {
         Block block = state.getBlock();
         return !state.getFluidState().isEmpty()
-                || (block == Blocks.MAGMA_BLOCK && !Baritone.settings().allowWalkOnMagmaBlocks.value)
+                || block == Blocks.MAGMA_BLOCK
                 || block == Blocks.CACTUS
                 || block == Blocks.SWEET_BERRY_BUSH
                 || block instanceof BaseFireBlock
@@ -419,7 +422,10 @@ public interface MovementHelper extends ActionCosts, Helper {
 
     static Ternary canWalkOnBlockState(BlockState state) {
         Block block = state.getBlock();
-        if (isBlockNormalCube(state) && (block != Blocks.MAGMA_BLOCK || Baritone.settings().allowWalkOnMagmaBlocks.value) && block != Blocks.BUBBLE_COLUMN && block != Blocks.HONEY_BLOCK) {
+        if (block == Blocks.MAGMA_BLOCK || isLava(state)) {
+            return NO;
+        }
+        if (isBlockNormalCube(state) && block != Blocks.BUBBLE_COLUMN && block != Blocks.HONEY_BLOCK) {
             return YES;
         }
         if (block instanceof AzaleaBlock) {
@@ -728,6 +734,58 @@ public interface MovementHelper extends ActionCosts, Helper {
      * @param state The block state
      * @return Whether or not the block is water
      */
+    /** Open distance from the bottom of this cell before a solid face. 1 means the cell is clear. */
+    static double openFromBottom(BlockState state) {
+        if (state.isAir() || canWalkThroughBlockState(state) == YES) {
+            return 1.0;
+        }
+        Block block = state.getBlock();
+        if (block instanceof SlabBlock) {
+            SlabType type = state.getValue(SlabBlock.TYPE);
+            if (type == SlabType.TOP) {
+                return 0.5;
+            }
+            return 0.0;
+        }
+        return 0.0;
+    }
+
+    /** Blocks of air, or partial slab, above the top face of the water at y. */
+    static double waterHeadroom(BlockStateInterface bsi, int x, int y, int z) {
+        double room = 0.0;
+        for (int dy = 1; dy <= 3; dy++) {
+            BlockState above = bsi.get0(x, y + dy, z);
+            if (!above.getFluidState().isEmpty()) {
+                return room;
+            }
+            double open = openFromBottom(above);
+            if (open >= 1.0) {
+                room += 1.0;
+                if (room >= 2.0) {
+                    return room;
+                }
+                continue;
+            }
+            return room + Math.max(0.0, open);
+        }
+        return room;
+    }
+
+    static int waterDepth(BlockStateInterface bsi, int x, int y, int z) {
+        int depth = 0;
+        for (int dy = 0; dy < 4; dy++) {
+            if (!isWater(bsi.get0(x, y - dy, z))) {
+                break;
+            }
+            depth++;
+        }
+        return depth;
+    }
+
+    static boolean lowWaterPassable(double headroom, int depth) {
+        return headroom >= 2.0 || headroom + depth >= 1.8;
+    }
+
     static boolean isWater(BlockState state) {
         Fluid f = state.getFluidState().getType();
         return f == Fluids.WATER || f == Fluids.FLOWING_WATER;

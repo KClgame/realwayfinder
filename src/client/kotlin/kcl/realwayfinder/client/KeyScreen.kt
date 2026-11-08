@@ -26,8 +26,6 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 		y += 24
 		row("skip", RealwayfinderClient.skip, RouteSettings.modSkip, y)
 		y += 24
-		row("record", RealwayfinderClient.record, RouteSettings.modRecord, y)
-		y += 24
 		row("reset", RealwayfinderClient.resetPath, RouteSettings.modReset, y)
 		addRenderableWidget(Button.builder(Component.literal("返回")) { _ -> onClose() }.bounds(width / 2 - 40, height - 28, 80, 20).build())
 	}
@@ -61,8 +59,7 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 				1 -> RouteSettings.modSetup = 0
 				2 -> RouteSettings.modScan = 0
 				3 -> RouteSettings.modSkip = 0
-				4 -> RouteSettings.modRecord = 0
-				5 -> RouteSettings.modReset = 0
+				4 -> RouteSettings.modReset = 0
 				else -> return super.mouseClicked(event, doubled)
 			}
 			recording = null
@@ -82,7 +79,6 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 					"setup" -> RouteSettings.modSetup = event.key()
 					"scan" -> RouteSettings.modScan = event.key()
 					"skip" -> RouteSettings.modSkip = event.key()
-					"record" -> RouteSettings.modRecord = event.key()
 					"reset" -> RouteSettings.modReset = event.key()
 				}
 				RouteSettings.save()

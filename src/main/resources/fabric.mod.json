@@ -3,7 +3,7 @@
 	"id": "realwayfinder",
 	"version": "${version}",
 	"name": "Realwayfinder",
-	"description": "Spot selection, scanning, and casting. Walking is Baritone 26.2 (LGPL-3.0, https://github.com/cabaletta/baritone), compiled from commit 9fadf7cf into this jar.",
+	"description": "Spot selection, scanning, and casting. Adaptation progress: I4-tropical. Walking is Baritone 26.2 (LGPL-3.0, https://github.com/cabaletta/baritone), compiled from commit 9fadf7cf into this jar.",
 	"authors": [
 		"KCl"
 	],

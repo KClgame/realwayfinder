@@ -40,8 +40,7 @@ object BuiltInRoutes {
 			ScanPoint(-352, 157, 314),
 			ScanPoint(-298, 150, 283),
 			ScanPoint(-264, 150, 342),
-			ScanPoint(-206, 153, 382),
-			ScanPoint(-155, 150, 260)
+			ScanPoint(-206, 153, 382)
 		),
 		"I2" to listOf(
 			ScanPoint(1871, 151, 684),

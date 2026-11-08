@@ -64,7 +64,8 @@ object IslandCycle {
 			spot.perkValue(PerkType.PEARL_CHANCE),
 			spot.perkValue(PerkType.TREASURE_CHANCE),
 			spot.perkValue(PerkType.SPIRIT_CHANCE),
-			RouteSettings.fishTargets
+			RouteSettings.fishTargets,
+			spot.perkValue(PerkType.XP_MAGNET)
 		)
 
 	fun say(message: String): Boolean {

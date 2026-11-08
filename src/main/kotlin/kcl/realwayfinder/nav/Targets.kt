@@ -5,6 +5,7 @@ enum class FishTarget {
 	STRONG,
 	ELUSIVE,
 	WAYFINDER,
+	XP,
 	PEARL,
 	TREASURE,
 	SPIRIT
@@ -49,17 +50,51 @@ fun islandSpotQualifies(
 	pearl: Int,
 	treasure: Int,
 	spirit: Int,
-	enabled: Set<FishTarget>
+	enabled: Set<FishTarget>,
+	xp: Int = 0
 ): Boolean {
 	if (enabled.isEmpty()) return false
 	val hooks = FishTarget.WISE in enabled || FishTarget.STRONG in enabled
 	if (hooks && strong.coerceAtLeast(0) + wise.coerceAtLeast(0) >= 30) return true
 	if (FishTarget.ELUSIVE in enabled && elusive > 0) return true
 	if (FishTarget.WAYFINDER in enabled && wayfinder > 0) return true
+	if (FishTarget.XP in enabled && xp > 0) return true
 	if (FishTarget.PEARL in enabled && pearl > 0) return true
 	if (FishTarget.TREASURE in enabled && treasure > 0) return true
 	if (FishTarget.SPIRIT in enabled && spirit > 0) return true
 	return false
+}
+
+fun islandLead(
+	strong: Int,
+	wise: Int,
+	elusive: Int,
+	wayfinder: Int,
+	pearl: Int,
+	treasure: Int,
+	spirit: Int,
+	order: List<FishTarget>,
+	enabled: Set<FishTarget>,
+	xp: Int = 0
+): FishTarget? {
+	val hookSum = strong.coerceAtLeast(0) + wise.coerceAtLeast(0)
+	val values = mapOf(
+		FishTarget.ELUSIVE to elusive,
+		FishTarget.WAYFINDER to wayfinder,
+		FishTarget.XP to xp,
+		FishTarget.PEARL to pearl,
+		FishTarget.TREASURE to treasure,
+		FishTarget.SPIRIT to spirit
+	)
+	for (target in order) {
+		if (target !in enabled) continue
+		if (target == FishTarget.WISE || target == FishTarget.STRONG) {
+			if (hookSum > 0) return target
+			continue
+		}
+		if ((values[target] ?: -1) > 0) return target
+	}
+	return null
 }
 
 fun normalRank(
@@ -71,28 +106,38 @@ fun normalRank(
 	treasure: Int,
 	spirit: Int,
 	order: List<FishTarget>,
-	enabled: Set<FishTarget>
+	enabled: Set<FishTarget>,
+	xp: Int = 0
 ): NormalRank? {
-	val hookSum = strong.coerceAtLeast(0) + wise.coerceAtLeast(0)
-	val firstHook = order.firstOrNull { it in enabled && (it == FishTarget.WISE || it == FishTarget.STRONG) }
-	val tie = if (firstHook == FishTarget.STRONG) strong.coerceAtLeast(0) else wise.coerceAtLeast(0)
-	val values = mapOf(
-		FishTarget.ELUSIVE to elusive,
-		FishTarget.WAYFINDER to wayfinder,
-		FishTarget.PEARL to pearl,
-		FishTarget.TREASURE to treasure,
-		FishTarget.SPIRIT to spirit
-	)
-	for ((index, target) in order.withIndex()) {
-		if (target !in enabled) continue
-		if (target == FishTarget.WISE || target == FishTarget.STRONG) {
-			if (hookSum > 0) return NormalRank(index, hookSum, tie)
-			continue
-		}
-		val value = values[target] ?: -1
-		if (value > 0) return NormalRank(index, value, 0)
+	val lead = islandLead(strong, wise, elusive, wayfinder, pearl, treasure, spirit, order, enabled, xp) ?: return null
+	val index = order.indexOf(lead).let { if (it < 0) order.size else it }
+	if (lead == FishTarget.WISE || lead == FishTarget.STRONG) {
+		val hookSum = strong.coerceAtLeast(0) + wise.coerceAtLeast(0)
+		val firstHook = order.firstOrNull { it in enabled && (it == FishTarget.WISE || it == FishTarget.STRONG) }
+		val tie = if (firstHook == FishTarget.STRONG) strong.coerceAtLeast(0) else wise.coerceAtLeast(0)
+		return NormalRank(index, hookSum, tie)
 	}
-	return null
+	val value = when (lead) {
+		FishTarget.ELUSIVE -> elusive
+		FishTarget.WAYFINDER -> wayfinder
+		FishTarget.XP -> xp
+		FishTarget.PEARL -> pearl
+		FishTarget.TREASURE -> treasure
+		FishTarget.SPIRIT -> spirit
+		FishTarget.WISE, FishTarget.STRONG -> 0
+	}
+	return NormalRank(index, value, 0)
+}
+
+/** The grotto row this spot belongs to. Same order the grotto ranker already uses. */
+fun grottoKindOf(magnet: Int, elusive: Int, fish: Int, pearl: Int, treasure: Int, spirit: Int): GrottoKind? = when {
+	magnet >= 200 -> GrottoKind.MAGNET_FISH
+	elusive >= 0 -> GrottoKind.ELUSIVE_FISH
+	fish >= 0 -> GrottoKind.PURE_FISH
+	pearl >= 0 -> GrottoKind.PEARL
+	treasure >= 0 -> GrottoKind.TREASURE
+	spirit >= 0 -> GrottoKind.SPIRIT
+	else -> null
 }
 
 fun hourlyClear(text: String): Boolean {

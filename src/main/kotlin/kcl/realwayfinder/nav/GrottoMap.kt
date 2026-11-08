@@ -15,6 +15,12 @@ fun temperateDiscovery(text: String): Boolean = discoveredGrottoClimate(text).eq
 
 fun tropicalDiscovery(text: String): Boolean = discoveredGrottoClimate(text).equals("Tropical", ignoreCase = true)
 
+/** Action bar telling the player to type /hub. */
+fun hubPrompt(text: String): Boolean {
+	val plain = text.replace(Regex("§."), "")
+	return plain.contains("Enter /hub", ignoreCase = true)
+}
+
 /** The grotto instance ended. Island hour refreshes do not match. */
 fun grottoClosed(text: String): Boolean {
 	val lower = text.lowercase()

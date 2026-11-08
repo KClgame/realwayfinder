@@ -17,6 +17,7 @@ import kcl.realwayfinder.nav.approachPoint
 import kcl.realwayfinder.nav.findPath
 import kcl.realwayfinder.nav.nearPlannedEnd
 import kcl.realwayfinder.nav.nearestStand
+import kcl.realwayfinder.nav.openAirBetween
 import kcl.realwayfinder.nav.pickIsland
 import kcl.realwayfinder.nav.grottoColKey
 import kcl.realwayfinder.nav.grottoSameFloor
@@ -27,6 +28,9 @@ import kcl.realwayfinder.nav.waterTouchesSpawnLand
 
 import kcl.realwayfinder.nav.grottoPrefer
 import kcl.realwayfinder.nav.normalPrefer
+import kcl.realwayfinder.nav.grottoKindOf
+import kcl.realwayfinder.nav.islandLead
+import kcl.realwayfinder.nav.islandOc
 import kcl.realwayfinder.nav.islandSpotQualifies
 import kcl.realwayfinder.nav.normalRank
 import kcl.spotfilter.client.data.FishingSpot
@@ -273,6 +277,7 @@ object RoutePlanner {
 			if (spot.place != here || spot.kind == SpotKind.GROTTO) return@mapNotNull null
 			if (spot.stock == StockLevel.DEPLETED) return@mapNotNull null
 			if ("${spot.x},${spot.y},${spot.z}" in RouteRuntime.skippedSpots) return@mapNotNull null
+			val xp = spot.perkValue(PerkType.XP_MAGNET)
 			if (!islandSpotQualifies(
 					spot.perkValue(PerkType.STRONG_HOOK),
 					spot.perkValue(PerkType.WISE_HOOK),
@@ -281,7 +286,8 @@ object RoutePlanner {
 					spot.perkValue(PerkType.PEARL_CHANCE),
 					spot.perkValue(PerkType.TREASURE_CHANCE),
 					spot.perkValue(PerkType.SPIRIT_CHANCE),
-					targets
+					targets,
+					xp
 				)
 			) return@mapNotNull null
 			val rank = normalRank(
@@ -293,7 +299,8 @@ object RoutePlanner {
 				spot.perkValue(PerkType.TREASURE_CHANCE),
 				spot.perkValue(PerkType.SPIRIT_CHANCE),
 				order,
-				targets
+				targets,
+				xp
 			) ?: return@mapNotNull null
 			spot to rank
 		}.sortedWith { left, right ->
@@ -324,16 +331,46 @@ object RoutePlanner {
 		}.map { it.first }
 	}
 
-	private fun grottoRank(spot: FishingSpot, order: List<GrottoKind>, enabled: Set<GrottoKind>): GrottoRank? {
-		val kind = when {
-			spot.perkValue(PerkType.FISH_MAGNET) >= 200 -> GrottoKind.MAGNET_FISH
-			spot.perkValue(PerkType.ELUSIVE_CHANCE) >= 0 -> GrottoKind.ELUSIVE_FISH
-			spot.perkValue(PerkType.FISH_CHANCE) >= 0 -> GrottoKind.PURE_FISH
-			spot.perkValue(PerkType.PEARL_CHANCE) >= 0 -> GrottoKind.PEARL
-			spot.perkValue(PerkType.TREASURE_CHANCE) >= 0 -> GrottoKind.TREASURE
-			spot.perkValue(PerkType.SPIRIT_CHANCE) >= 0 -> GrottoKind.SPIRIT
-			else -> return null
+	fun overclockFor(spot: FishingSpot): Pair<String, OcTriple>? {
+		val place = spot.place
+		if (place?.kind == SpotKind.GROTTO || spot.kind == SpotKind.GROTTO) {
+			val kind = grottoKindOf(
+				spot.perkValue(PerkType.FISH_MAGNET),
+				spot.perkValue(PerkType.ELUSIVE_CHANCE),
+				spot.perkValue(PerkType.FISH_CHANCE),
+				spot.perkValue(PerkType.PEARL_CHANCE),
+				spot.perkValue(PerkType.TREASURE_CHANCE),
+				spot.perkValue(PerkType.SPIRIT_CHANCE)
+			) ?: return null
+			if (kind !in RouteSettings.grottoTargets) return null
+			return "grotto:${kind.name}" to OverclockFile.grotto(kind)
 		}
+		val xp = spot.perkValue(PerkType.XP_MAGNET)
+		val lead = islandLead(
+			spot.perkValue(PerkType.STRONG_HOOK),
+			spot.perkValue(PerkType.WISE_HOOK),
+			spot.perkValue(PerkType.ELUSIVE_CHANCE),
+			spot.perkValue(PerkType.WAYFINDER_DATA),
+			spot.perkValue(PerkType.PEARL_CHANCE),
+			spot.perkValue(PerkType.TREASURE_CHANCE),
+			spot.perkValue(PerkType.SPIRIT_CHANCE),
+			RouteSettings.fishOrder,
+			RouteSettings.fishTargets,
+			xp
+		) ?: return null
+		val oc = islandOc(lead)
+		return "island:${oc.name}" to OverclockFile.island(oc)
+	}
+
+	private fun grottoRank(spot: FishingSpot, order: List<GrottoKind>, enabled: Set<GrottoKind>): GrottoRank? {
+		val kind = grottoKindOf(
+			spot.perkValue(PerkType.FISH_MAGNET),
+			spot.perkValue(PerkType.ELUSIVE_CHANCE),
+			spot.perkValue(PerkType.FISH_CHANCE),
+			spot.perkValue(PerkType.PEARL_CHANCE),
+			spot.perkValue(PerkType.TREASURE_CHANCE),
+			spot.perkValue(PerkType.SPIRIT_CHANCE)
+		) ?: return null
 		if (kind !in enabled) return null
 		val type = order.indexOf(kind).let { if (it < 0) order.size else it }
 		val cost = when (spot.stability) {
@@ -551,6 +588,9 @@ object RoutePlanner {
 					val y = spot.y + dy
 					if ("$x,$y,$z" in RouteRuntime.droppedStances["${spot.x},${spot.y},${spot.z}"].orEmpty()) continue
 					if (!fishingSurface(level, x, y, z)) continue
+					if (!openAirBetween(x, y, z, spot.x, spot.y, spot.z) { bx, by, bz ->
+						level.getBlockState(BlockPos(bx, by, bz)).isAir
+					}) continue
 					val ady = abs(dy)
 					if (dist < bestDist || (dist == bestDist && ady < bestDy)) {
 						bestDist = dist
@@ -602,9 +642,11 @@ object RoutePlanner {
 		val stance = Node(fx, fy, fz, Mode.LAND)
 		val spot = SpotPool.all().firstOrNull { it.x == plan.spotX && it.y == plan.spotY && it.z == plan.spotZ }
 		val look = if (spot != null) displayPoint(level, spot) else Vec3(plan.spotX + 0.5, plan.spotY + 0.5, plan.spotZ + 0.5)
+		if (!look.x.isFinite() || !look.y.isFinite() || !look.z.isFinite()) return null
 		val lx = floor(look.x).toInt()
 		val ly = floor(look.y).toInt()
 		val lz = floor(look.z).toInt()
+		if (kotlin.math.abs(lx - fx) > 48 || kotlin.math.abs(ly - fy) > 32 || kotlin.math.abs(lz - fz) > 48) return null
 		val grid = readGrid(
 			level,
 			min(fx, lx) - 3,
@@ -925,9 +967,12 @@ object RoutePlanner {
 	}
 
 	private fun readGrid(level: ClientLevel, minX: Int, minY: Int, minZ: Int, maxX: Int, maxY: Int, maxZ: Int): Grid {
-		val sizeX = maxX - minX + 1
-		val sizeY = maxY - minY + 1
-		val sizeZ = maxZ - minZ + 1
+		val sizeX = (maxX.toLong() - minX.toLong() + 1L).toInt()
+		val sizeY = (maxY.toLong() - minY.toLong() + 1L).toInt()
+		val sizeZ = (maxZ.toLong() - minZ.toLong() + 1L).toInt()
+		if (kcl.realwayfinder.nav.Grid.cellCount(sizeX, sizeY, sizeZ) == null) {
+			return Grid.build(minX, minY, minZ, 1, 1, 1) { _, _, _ -> Cell.UNKNOWN }
+		}
 		val chunks = HashMap<Long, Boolean>()
 		return Grid.build(minX, minY, minZ, sizeX, sizeY, sizeZ) { x, y, z ->
 			val key = (x shr 4).toLong() shl 32 or ((z shr 4).toLong() and 0xffffffffL)

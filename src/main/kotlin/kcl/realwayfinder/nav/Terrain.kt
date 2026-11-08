@@ -36,8 +36,68 @@ fun isLand(grid: Grid, x: Int, y: Int, z: Int): Boolean {
 		!tallReaches(grid, x, y + 1, z)
 }
 
+/**
+ * Space above a water surface, in blocks. Each column entry is one cell above the surface.
+ * An open cell adds 1. A top slab adds 0.5 and stops. A bottom slab or a full block stops at its floor.
+ * Two or more blocks of room is enough to stay on the surface.
+ */
+fun waterHeadroom(above: List<Double>): Double {
+	var room = 0.0
+	for (open in above) {
+		if (open >= 1.0) {
+			room += 1.0
+			if (room >= 2.0) return room
+			continue
+		}
+		return room + open.coerceAtLeast(0.0)
+	}
+	return room
+}
+
+/** Low water is passable when the body can drop into it. Otherwise the path goes around. */
+fun lowWaterPassable(headroom: Double, depth: Int): Boolean =
+	headroom >= 2.0 || headroom + depth >= 1.8
+
 /** A tall block in the cell below sticks 0.5 into this cell. */
 fun tallReaches(grid: Grid, x: Int, y: Int, z: Int): Boolean = grid.get(x, y - 1, z) == Cell.TALL
+
+/**
+ * Cells strictly between the stand and the fishing spot must be air.
+ * The stand cell and the spot cell are the ends, so the water itself is allowed.
+ */
+fun openAirBetween(
+	x0: Int,
+	y0: Int,
+	z0: Int,
+	x1: Int,
+	y1: Int,
+	z1: Int,
+	air: (Int, Int, Int) -> Boolean
+): Boolean {
+	val dx = x1 - x0
+	val dy = y1 - y0
+	val dz = z1 - z0
+	val steps = maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy), kotlin.math.abs(dz))
+	if (steps <= 1) return true
+	val samples = steps * 4
+	var seenX = x0
+	var seenY = y0
+	var seenZ = z0
+	for (i in 1 until samples) {
+		val t = i / samples.toDouble()
+		val x = kotlin.math.floor(x0 + 0.5 + dx * t).toInt()
+		val y = kotlin.math.floor(y0 + 0.5 + dy * t).toInt()
+		val z = kotlin.math.floor(z0 + 0.5 + dz * t).toInt()
+		if (x == x0 && y == y0 && z == z0) continue
+		if (x == x1 && y == y1 && z == z1) continue
+		if (x == seenX && y == seenY && z == seenZ) continue
+		if (!air(x, y, z)) return false
+		seenX = x
+		seenY = y
+		seenZ = z
+	}
+	return true
+}
 
 /** Body interval (y0, y1) overlaps this cell's collision. A fence occupies [y, y + 1.5). */
 fun bodyHits(grid: Grid, bx: Int, by: Int, bz: Int, y0: Double, y1: Double): Boolean {

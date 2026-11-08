@@ -5,24 +5,28 @@ import kcl.realwayfinder.Realwayfinder
 import kcl.realwayfinder.RouteLock
 import kcl.realwayfinder.nav.BuiltInRoutes
 import kcl.realwayfinder.nav.IslandJob
+import kcl.realwayfinder.nav.lobbyScoreboard
+import kcl.realwayfinder.nav.perkName
 import kcl.realwayfinder.nav.pickIsland
+import kcl.realwayfinder.nav.travelDestination
 import kcl.realwayfinder.nav.CastSolution
 import kcl.realwayfinder.nav.Mode
 import kcl.realwayfinder.nav.Node
 import kcl.realwayfinder.nav.Route
 import kcl.realwayfinder.nav.RouteMemory
 import kcl.realwayfinder.nav.ScanPoint
-import kcl.realwayfinder.nav.ScriptRole
-import kcl.realwayfinder.nav.TickInput
 import kcl.realwayfinder.nav.stuckCells
 import kcl.spotfilter.client.Hotkeys
 import kcl.spotfilter.client.data.SpotKind
 import kcl.realwayfinder.nav.grottoClosed
+import kcl.realwayfinder.nav.hubPrompt
 import kcl.realwayfinder.nav.hourlyClear
 
 import kcl.spotfilter.client.data.FishingPlace
+import kcl.spotfilter.client.data.SpotPool
 import kcl.spotfilter.client.data.StockLevel
 import kcl.spotfilter.client.data.FishingWorld
+import net.minecraft.world.scores.DisplaySlot
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper
@@ -45,12 +49,20 @@ object RouteRuntime {
 	private var revision = RouteSettings.revision
 	private var phase = Phase.SEEK
 	private var lastClearMs = 0L
+	private var lastHubMs = 0L
 	private val dock = CastDock()
 	private val runner = PathRunner()
-	private val tapePlayer = TapePlayer()
-	private enum class Phase { SEEK, SCRIPT, WAIT_FISH, WAIT_GROTTO, RING, HOME, COVER }
-	private var script: List<TickInput>? = null
-	private var scriptRole: ScriptRole? = null
+	private var resumeAfterSpawn = false
+	private var travelCooldown = 0
+	private var ocCooldown = 0
+	private var toldNoDestination = false
+	/** After a reconnect, press escape twice with five seconds between, then wait five more seconds. */
+	private var awaitJoin = false
+	private var joinTicks = -1
+	private var forcedDest: String? = null
+	private var travelNow = false
+	private var abandonGrotto = false
+	private enum class Phase { SEEK, WAIT_FISH, WAIT_GROTTO, RING, COVER }
 	private var fishDelay = 0
 	private var pendingGrotto: FishingPlace? = null
 	private var ring: List<ScanPoint> = emptyList()
@@ -65,14 +77,6 @@ object RouteRuntime {
 	private var fishPending = false
 	private var replanDelay = 0
 	private var arrivalKey = ""
-	private var scanAfterHome = false
-	private var homeThenFish = false
-	private var skipHome = false
-	private var pendingPlace: FishingPlace? = null
-	/** After this island's return-to-spawn replay, start its scan without returning again. */
-	private var scanAfterReturnId: String? = null
-	private var homeTarget: ScanPoint? = null
-	private var homeRoute: Route? = null
 	private var grottoScan: GrottoScan? = null
 	/** Scan progress kept when M turns the mod off mid-scan. */
 	private var heldScan: HeldScan? = null
@@ -97,31 +101,34 @@ object RouteRuntime {
 		val client = Minecraft.getInstance()
 		val player = client.player
 		val level = client.level
-		if (player != null && ScanRecord.recording) {
-			ScanRecord.capture(client, player)
-			BaritoneNav.stop()
-			runner.release(client)
-			tapePlayer.release(client)
-			return
-		}
 		if (player == null || level == null) {
 			plan = null
 				stillTicks = 0
 			phase = Phase.SEEK
 			dock.clear()
 			runner.release(client)
-			tapePlayer.release(client)
+			OcCache.clear()
+			travelCooldown = 0
+			ocCooldown = 0
+			awaitJoin = true
+			joinTicks = -1
+			MenuClicker.cancel(client)
 			return
 		}
-		if (phase == Phase.SCRIPT) {
-			BaritoneNav.stop()
-			if (adaptScanIsland(player)) return
-			tickScript(client, player)
-			return
+		if (awaitJoin) {
+			awaitJoin = false
+			joinTicks = 0
 		}
-		if (phase == Phase.HOME) {
-			tickHome(client, player, level)
-			return
+		if (joinTicks >= 0) {
+			if (joinTicks == 0 || joinTicks == 100) MenuClicker.tapEscape(client)
+			joinTicks++
+			if (joinTicks > 200) joinTicks = -1
+		}
+		if (RouteSettings.enabled) {
+			syncDuty(client)
+			driveMenus(client, player)
+		} else if (!RouteSettings.enabled) {
+			MenuClicker.cancel(client)
 		}
 		if (phase == Phase.COVER) {
 			tickCover()
@@ -143,6 +150,8 @@ object RouteRuntime {
 			if (fishDelay <= 0) {
 				RouteSettings.enabled = true
 				RouteSettings.save()
+				plan = null
+				fishPending = true
 				phase = Phase.SEEK
 				player.sendSystemMessage(Component.literal("Realwayfinder 开始寻路"))
 			}
@@ -262,7 +271,7 @@ object RouteRuntime {
 			runner.release(client)
 			stillTicks = 0
 		}
-		if (phase == Phase.SEEK && runner.takeRepeat()) returnHome(thenScan = false)
+		if (phase == Phase.SEEK && runner.takeRepeat()) returnHome()
 		noteArrival(player, level)
 		val goal = atCast(player, plan)
 		val cast = castHere(player, plan)
@@ -284,7 +293,9 @@ object RouteRuntime {
 			if (aimed != null) plan = live.copy(cast = aimed, casts = listOf(aimed), waterX = aimed.landX, waterZ = aimed.landZ)
 		}
 		val throwCast = castHere(player, plan)
-		dock.tick(client, player, goal || throwCast != null, throwCast ?: cast, paused, plan?.waterX ?: Double.NaN, plan?.waterZ ?: Double.NaN)
+		val holdOc = waitingForOverclock(client, plan)
+		val castNow = if (holdOc) null else throwCast ?: cast
+		dock.tick(client, player, (goal || throwCast != null) && !holdOc, castNow, paused, plan?.waterX ?: Double.NaN, plan?.waterZ ?: Double.NaN)
 		watchBite(player, goal, plan)
 	}
 
@@ -309,7 +320,7 @@ object RouteRuntime {
 				biteTicks = 0
 				biteFailures[id] = 1
 				player.sendSystemMessage(Component.literal("Realwayfinder 30秒没钓到，回出生点"))
-				returnHome(thenScan = false)
+				returnHome()
 			}
 			kcl.realwayfinder.nav.BiteResult.SKIP -> {
 				skippedSpots.add(id)
@@ -330,18 +341,8 @@ object RouteRuntime {
 		biteFailures.remove(biteSpot)
 	}
 
-	fun preview(player: net.minecraft.world.entity.player.Player, tape: List<TickInput>, name: String) {
-		script = tape
-		scriptRole = null
-		phase = Phase.SCRIPT
-		tapePlayer.reset()
-		runner.release(Minecraft.getInstance())
-		dock.clear()
-		player.sendSystemMessage(Component.literal("Realwayfinder 回放开始 $name"))
-	}
-
 	fun toggleScan() {
-		if (phase == Phase.RING || phase == Phase.HOME || phase == Phase.COVER || scanAfterHome) {
+		if (phase == Phase.RING || phase == Phase.COVER) {
 			stopScan()
 			return
 		}
@@ -353,15 +354,7 @@ object RouteRuntime {
 		ringRoute = null
 		heldScan = null
 		pausedCover = false
-		scanAfterHome = false
-		skipHome = false
-		pendingPlace = null
-		homeTarget = null
-		homeRoute = null
 		grottoScan = null
-		script = null
-		scriptRole = null
-		tapePlayer.reset()
 		if (plan?.spotLabel == "扫点" || plan?.spotLabel == "回出生点") plan = null
 		phase = Phase.SEEK
 		RoutePlanner.cancel()
@@ -391,29 +384,55 @@ object RouteRuntime {
 			player?.sendSystemMessage(Component.literal("不在钓鱼岛"))
 			return
 		}
-		if (!beginScript(place, ScriptRole.SCAN)) {
-			player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${place.shortId} 的扫点录像"))
+		if (!startScan(place)) {
+			player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${place.shortId} 的扫点"))
 		}
 	}
 
 	fun discoverGrotto(grotto: FishingPlace) {
+		if (grotto == FishingPlace.GROTTO_TROPICAL) {
+			RouteSettings.clearScanned(grotto.shortId)
+			if (IslandCycle.armedScan.equals(grotto.shortId, ignoreCase = true)) IslandCycle.armedScan = null
+		}
 		pendingGrotto = grotto
-		if (scriptRole == ScriptRole.ENTER && phase == Phase.SCRIPT) return
 		if (FishingWorld.current == grotto) {
-			val who = Minecraft.getInstance().player
-			if (who != null) beginGrottoRoute(who) else startGrottoFish()
+			startGrottoWork(grotto)
 			return
 		}
-		if (!beginScript(grotto, ScriptRole.ENTER)) {
-			phase = Phase.WAIT_GROTTO
-			Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${grotto.shortId} 的进入录像，等待进入"))
-		}
+		RouteSettings.noteGrotto(grotto.climate.name)
+		abandonGrotto = false
+		requestIslandTravel(grotto.climate.name)
+		Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 前往 ${grotto.shortId}"))
+	}
+
+	fun onActionBar(text: String) {
+		if (!hubPrompt(text)) return
+		val now = System.currentTimeMillis()
+		if (now - lastHubMs < 5000) return
+		lastHubMs = now
+		val client = Minecraft.getInstance()
+		val player = client.player ?: return
+		client.gui.setScreen(net.minecraft.client.gui.screens.ChatScreen("/hub", true))
+		player.connection.sendCommand("hub")
+		client.gui.setScreen(null)
+		player.sendSystemMessage(Component.literal("Realwayfinder /hub"))
 	}
 
 	fun onChat(text: String) {
 		GrottoEntry.onChat(text)
 		if (grottoClosed(text)) {
 			RouteSettings.resetGrottoScanned()
+			RouteSettings.noteGrotto("")
+			pendingGrotto = null
+			abandonGrotto = true
+			if (RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")) IslandCycle.armedScan = null
+			val next = pickIsland(IslandCycle.enabledOrder(), RouteSettings.scanned, RouteSettings.finished)
+			if (next != null) {
+				IslandCycle.duty = next.id
+				IslandCycle.job = next.job
+				IslandCycle.returnedFor = next.id
+				requestIslandTravel(next.id)
+			}
 			Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder Grotto 扫点已重置"))
 		}
 		if (missedFishingSpot(text)) rejectCast()
@@ -426,34 +445,49 @@ object RouteRuntime {
 	}
 
 	private fun startIslandHour() {
+		val place = FishingWorld.current
 		RouteSettings.resetScanned()
 		skippedSpots.clear()
 		biteFailures.clear()
 		IslandCycle.resetToTop()
-		val duty = IslandCycle.duty
-		val place = FishingWorld.current
 		val player = Minecraft.getInstance().player
-		if (duty == null) {
-			if (place != null) beginScript(place, ScriptRole.SCAN)
+		if (place != null && place.kind == SpotKind.GROTTO) {
+			forcedDest = null
+			travelNow = false
+			val grottoId = place.shortId.uppercase()
+			if (grottoId in RouteSettings.scanned) IslandCycle.armedScan = grottoId
+			player?.sendSystemMessage(Component.literal("Realwayfinder 整点已重置，留在 Grotto"))
 			return
 		}
+		val duty = IslandCycle.duty
+		if (duty == null) return
 		if (place != null && IslandCycle.matches(place)) {
 			IslandCycle.armedScan = duty
-			beginScript(place, ScriptRole.SCAN)
+			startScan(place)
 		} else {
+			ring = emptyList()
+			ringRoute = null
+			grottoScan = null
+			plan = null
+			if (phase == Phase.RING || phase == Phase.COVER || phase == Phase.WAIT_FISH) {
+				phase = Phase.SEEK
+			}
+			IslandCycle.armedScan = null
 			IslandCycle.waiting = true
 			IslandCycle.job = kcl.realwayfinder.nav.IslandJob.SCAN
-			IslandCycle.returnedFor = duty
-			if (!playIslandReturnThenScan(duty)) {
-				val msg = "前往 $duty 扫点"
-				if (IslandCycle.say(msg)) player?.sendSystemMessage(Component.literal("Realwayfinder $msg"))
-				player?.sendSystemMessage(Component.literal("Realwayfinder 没有 $duty 的回出生点"))
-			}
+			IslandCycle.returnedFor = null
+			requestIslandTravel(duty)
+			player?.sendSystemMessage(Component.literal("Realwayfinder 前往 $duty"))
 		}
 	}
 
 	private fun followIslandCycle(place: FishingPlace?) {
-		if (place == null || place.kind == SpotKind.GROTTO) return
+		if (place == null) return
+		if (place.kind == SpotKind.GROTTO) {
+			followGrotto(place)
+			return
+		}
+		if (RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")) IslandCycle.armedScan = null
 		if (phase != Phase.SEEK) return
 		refreshFinished()
 		val order = IslandCycle.enabledOrder()
@@ -476,15 +510,10 @@ object RouteRuntime {
 			if (pick.job != IslandJob.SCAN) IslandCycle.armedScan = null
 		}
 		if (!arrived) {
-			if (pick.job == IslandJob.SCAN && IslandCycle.returnedFor != pick.id) {
+			if (IslandCycle.returnedFor != pick.id) {
 				IslandCycle.returnedFor = pick.id
-				if (playIslandReturnThenScan(pick.id)) return
-				val player = Minecraft.getInstance().player
-				val msg = "前往 ${pick.id} 扫点"
-				if (IslandCycle.say(msg)) player?.sendSystemMessage(Component.literal("Realwayfinder $msg"))
-				player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${pick.id} 的回出生点"))
-			} else if (pick.job == IslandJob.FISH) {
-				val msg = "前往 ${pick.id} 钓鱼"
+				requestIslandTravel(pick.id)
+				val msg = if (pick.job == IslandJob.SCAN) "前往 ${pick.id} 扫点" else "前往 ${pick.id} 钓鱼"
 				if (IslandCycle.say(msg)) {
 					Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder $msg"))
 				}
@@ -495,19 +524,47 @@ object RouteRuntime {
 		IslandCycle.waiting = false
 		if (pick.job == IslandJob.SCAN && IslandCycle.armedScan != pick.id) {
 			IslandCycle.armedScan = pick.id
-			if (!beginScript(place, ScriptRole.SCAN)) {
+			if (!startScan(place)) {
 				Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${place.shortId} 的扫点"))
 			}
 		}
 	}
 
-	/** A scanned island with no qualifying spot left is finished and the cycle moves on. */
+	/** One cover plan per grotto visit. A grotto has no island ring, so this must not report a missing island scan. */
+	private fun followGrotto(place: FishingPlace) {
+		if (phase != Phase.SEEK) return
+		if (IslandCycle.armedScan.equals(place.shortId, ignoreCase = true)) return
+		startGrottoWork(place)
+	}
+
+	private fun startGrottoWork(place: FishingPlace) {
+		val id = place.shortId.uppercase()
+		ring = emptyList()
+		ringRoute = null
+		grottoScan = null
+		pendingGrotto = place
+		abandonGrotto = false
+		if (id in RouteSettings.scanned) {
+			IslandCycle.armedScan = id
+			startGrottoFish()
+			fishPending = true
+			return
+		}
+		val player = Minecraft.getInstance().player ?: return
+		IslandCycle.armedScan = id
+		beginGrottoRoute(player)
+	}
+
+	/** A scanned island with no qualifying spot left is finished. The next pick is then scanned. */
 	private fun refreshFinished() {
+		val here = FishingWorld.current
+		val noFishHere = plan?.status == "没有鱼点" && here != null && here.kind != SpotKind.GROTTO
 		for (id in RouteSettings.scanned.toList()) {
+			if (RouteSettings.isGrottoScanId(id)) continue
 			when (IslandCycle.remaining(id, skippedSpots)) {
 				true -> RouteSettings.clearFinished(id)
 				false -> RouteSettings.markFinished(id)
-				null -> Unit
+				null -> if (noFishHere && here.shortId.equals(id, ignoreCase = true)) RouteSettings.markFinished(id)
 			}
 		}
 	}
@@ -553,27 +610,6 @@ object RouteRuntime {
 		player.sendSystemMessage(Component.literal("Realwayfinder 重新抛竿"))
 	}
 
-	/** Play that island's return-to-spawn replay, then scan it. The place key is I1–I9. */
-	private fun playIslandReturnThenScan(islandId: String): Boolean {
-		val id = islandId.uppercase()
-		val tape = ScanRecord.tape(id, ScriptRole.RETURN) ?: return false
-		val player = Minecraft.getInstance().player ?: return false
-		script = tape
-		scriptRole = ScriptRole.RETURN
-		scanAfterReturnId = id
-		scanAfterHome = false
-		homeThenFish = false
-		pendingPlace = null
-		tapePlayer.reset()
-		runner.release(Minecraft.getInstance())
-		dock.clear()
-		plan = null
-		stillTicks = 0
-		phase = Phase.SCRIPT
-		player.sendSystemMessage(Component.literal("Realwayfinder 前往 $id 扫点，先回出生点"))
-		return true
-	}
-
 	private fun startIslandScan(islandId: String) {
 		val id = islandId.uppercase()
 		IslandCycle.duty = id
@@ -585,144 +621,40 @@ object RouteRuntime {
 			startRing(builtIn, grotto = false)
 			return
 		}
-		val tape = ScanRecord.tape(id, ScriptRole.SCAN)
-		val player = Minecraft.getInstance().player
-		if (tape == null) {
-			phase = Phase.SEEK
-			player?.sendSystemMessage(Component.literal("Realwayfinder 没有 $id 的扫点"))
-			return
-		}
-		script = tape
-		scriptRole = ScriptRole.SCAN
-		tapePlayer.reset()
-		runner.release(Minecraft.getInstance())
-		dock.clear()
-		plan = null
-		stillTicks = 0
-		phase = Phase.SCRIPT
-		player?.sendSystemMessage(Component.literal("Realwayfinder 扫点回放开始"))
+		phase = Phase.SEEK
+		Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 没有 $id 的扫点"))
 	}
 
-	private fun beginScript(place: FishingPlace, role: ScriptRole): Boolean {
-		if (role == ScriptRole.SCAN && !skipHome && queueHome(place)) return true
-		skipHome = false
-		if (role == ScriptRole.SCAN && place.kind == SpotKind.GROTTO) {
+	private fun startScan(place: FishingPlace): Boolean {
+		if (place.kind == SpotKind.GROTTO) {
 			val who = Minecraft.getInstance().player
 			if (who != null) beginGrottoRoute(who) else startGrottoFish()
-			return phase == Phase.RING || phase == Phase.SEEK
+			return true
 		}
 		val builtIn = BuiltInRoutes.island(place.shortId)
-		if (role == ScriptRole.SCAN && builtIn != null) {
+		if (builtIn != null) {
 			startRing(builtIn, grotto = false)
 			return true
 		}
-		val tape = ScanRecord.tape(place, role) ?: return false
-		script = tape
-		scriptRole = role
-		tapePlayer.reset()
-		runner.release(Minecraft.getInstance())
-		dock.clear()
-		plan = null
-		stillTicks = 0
-		phase = Phase.SCRIPT
-		if (role == ScriptRole.SCAN) {
-			Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 扫点回放开始"))
-		} else if (role == ScriptRole.ENTER) {
-			Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 进入回放开始"))
-		}
-		return true
+		Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 没有 ${place.shortId} 的扫点"))
+		return false
 	}
 
-	private fun returnHome(thenScan: Boolean) {
+	/** Re-enter the current island or grotto through the navigator so the player spawns again. */
+	private fun returnHome() {
 		val place = FishingWorld.current ?: return
-		if (phase == Phase.HOME || (phase == Phase.SCRIPT && scriptRole == ScriptRole.RETURN)) return
+		val player = Minecraft.getInstance().player
+		resumeAfterSpawn = true
+		ring = emptyList()
+		ringRoute = null
+		grottoScan = null
+		plan = null
+		phase = Phase.SEEK
+		BaritoneNav.stop()
 		runner.clearRepeat()
-		if (!queueHome(place, thenScan)) {
-			phase = Phase.SEEK
-		}
-	}
-
-	private fun queueHome(place: FishingPlace, thenScan: Boolean = true): Boolean {
-		pendingPlace = place
-		homeThenFish = !thenScan
-		val tape = ScanRecord.tape(place, ScriptRole.RETURN)
-		if (tape != null) {
-			script = tape
-			scriptRole = ScriptRole.RETURN
-			scanAfterHome = thenScan
-			tapePlayer.reset()
-			runner.release(Minecraft.getInstance())
-			dock.clear()
-			plan = null
-			stillTicks = 0
-			phase = Phase.SCRIPT
-			val why = if (thenScan) "Realwayfinder 回出生点" else "Realwayfinder 操作重复，回出生点"
-			Minecraft.getInstance().player?.sendSystemMessage(Component.literal(why))
-			return true
-		}
-		val player = Minecraft.getInstance().player ?: return false
-		val spawn = homePoint(place, player) ?: return false
-		scanAfterHome = thenScan
-		homeTarget = spawn
-		homeRoute = null
-		phase = Phase.HOME
-		runner.release(Minecraft.getInstance())
-		dock.clear()
-		plan = PlannedRoute("回出生点", "", null, null, "回出生点", spawn.x, spawn.y, spawn.z)
-		stillTicks = 0
-		val why = if (thenScan) "Realwayfinder 回出生点" else "Realwayfinder 操作重复，回出生点"
-		player.sendSystemMessage(Component.literal(why))
-		return true
-	}
-
-	private fun homePoint(place: FishingPlace, player: net.minecraft.world.entity.player.Player): ScanPoint? {
-		if (place.kind == SpotKind.GROTTO) return BuiltInRoutes.matchGrotto(player.x, player.z)?.spawn
-		return BuiltInRoutes.islandSpawns[place.shortId.uppercase()]
-	}
-
-	private fun tickHome(
-		client: Minecraft,
-		player: net.minecraft.world.entity.player.Player,
-		level: net.minecraft.client.multiplayer.ClientLevel
-	) {
-		val target = homeTarget ?: run {
-			finishHome(player)
-			return
-		}
-		tick++
-		plan = PlannedRoute("回出生点", "", null, null, "回出生点", target.x, target.y, target.z)
-		BaritoneNav.go(target.x, target.y, target.z, 1)
-		runner.release(client)
-		if (reachedCell(player, target.x, target.y, target.z)) {
-			BaritoneNav.stop()
-			finishHome(player)
-		}
-	}
-
-	private fun finishHome(player: net.minecraft.world.entity.player.Player) {
-		homeTarget = null
-		homeRoute = null
-		scanAfterHome = false
-		runner.release(Minecraft.getInstance())
-		player.sendSystemMessage(Component.literal("Realwayfinder 回出生点结束"))
-		runner.clearRepeat()
-		if (homeThenFish) {
-			homeThenFish = false
-			pendingPlace = null
-			plan = null
-			fishPending = true
-			RouteSettings.enabled = true
-			RouteSettings.save()
-			phase = Phase.SEEK
-			return
-		}
-		val place = pendingPlace
-		if (place != null) {
-			skipHome = true
-			beginScript(place, ScriptRole.SCAN)
-		} else {
-			phase = Phase.SEEK
-		}
+		val dest = if (place.kind == SpotKind.GROTTO) place.climate.name else place.shortId
+		requestIslandTravel(dest)
+		player?.sendSystemMessage(Component.literal("Realwayfinder 回出生点"))
 	}
 
 	private fun beginGrottoRoute(player: net.minecraft.world.entity.player.Player) {
@@ -788,9 +720,9 @@ object RouteRuntime {
 		plan = PlannedRoute("扫点", "${ringIndex + 1}/${ring.size}", route, null, "扫点", target.x, target.y, target.z)
 	}
 
-	/** The player changed islands while a scan was running. Follow the island they are on. */
+	/** Wrong island does not become the scan. Stop and let the priority pick send us onward. */
 	private fun adaptScanIsland(player: net.minecraft.world.entity.player.Player): Boolean {
-		if (ringGrotto || (phase == Phase.SCRIPT && scriptRole != ScriptRole.SCAN)) return false
+		if (ringGrotto) return false
 		val here = FishingWorld.current ?: return false
 		if (here.kind == SpotKind.GROTTO) return false
 		val id = here.shortId.uppercase()
@@ -799,21 +731,11 @@ object RouteRuntime {
 		BaritoneNav.stop()
 		ring = emptyList()
 		ringRoute = null
-		script = null
-		scriptRole = null
-		tapePlayer.reset()
 		runner.release(Minecraft.getInstance())
-		player.sendSystemMessage(Component.literal("Realwayfinder 扫点改到 $id"))
-		if (id in RouteSettings.scanned) {
-			phase = Phase.SEEK
-			IslandCycle.duty = id
-			IslandCycle.job = IslandJob.FISH
-			IslandCycle.waiting = false
-			IslandCycle.armedScan = null
-			IslandCycle.returnedFor = null
-			return true
-		}
-		startIslandScan(id)
+		phase = Phase.SEEK
+		IslandCycle.armedScan = null
+		IslandCycle.returnedFor = null
+		player.sendSystemMessage(Component.literal("Realwayfinder 人在 $id，继续按优先级去 $scanning"))
 		return true
 	}
 
@@ -850,23 +772,25 @@ object RouteRuntime {
 		ring = emptyList()
 		ringRoute = null
 		heldScan = null
+		plan = null
+		fishPending = true
+		stillTicks = 0
+		runner.clearRepeat()
 		player.sendSystemMessage(Component.literal("Realwayfinder 扫点结束"))
 		FishingWorld.current?.shortId?.let { RouteSettings.markScanned(it) }
-		val place = FishingWorld.current
-		if (place != null && queueHome(place, thenScan = false)) return
 		if (ringGrotto) {
 			startGrottoFish()
-		} else {
-			fishDelay = 60
-			phase = Phase.WAIT_FISH
+			fishPending = true
+			return
 		}
+		IslandCycle.job = IslandJob.FISH
+		IslandCycle.armedScan = null
+		phase = Phase.SEEK
+		player.sendSystemMessage(Component.literal("Realwayfinder 开始寻路"))
 	}
 
 	private fun startGrottoFish() {
 		pendingGrotto = null
-		script = null
-		scriptRole = null
-		tapePlayer.reset()
 		val client = Minecraft.getInstance()
 		runner.release(client)
 		dock.clear()
@@ -882,6 +806,7 @@ object RouteRuntime {
 
 	fun halt() {
 		phase = Phase.SEEK
+		MenuClicker.cancel(Minecraft.getInstance())
 		ring = emptyList()
 		ringRoute = null
 		fishPending = false
@@ -946,7 +871,7 @@ object RouteRuntime {
 		poseTick = 0
 		RoutePlanner.cancel()
 		runner.release(client)
-		if (phase == Phase.RING || phase == Phase.HOME || phase == Phase.COVER) {
+		if (phase == Phase.RING || phase == Phase.COVER) {
 			ring = emptyList()
 			ringRoute = null
 			grottoScan = null
@@ -962,6 +887,7 @@ object RouteRuntime {
 	private fun pauseMod(client: Minecraft) {
 		RouteSettings.enabled = false
 		RouteSettings.save()
+		MenuClicker.cancel(client)
 		dock.clear()
 		fishPending = false
 		plan = null
@@ -974,13 +900,190 @@ object RouteRuntime {
 	}
 
 	fun arm() {
-		if (phase == Phase.SCRIPT || phase == Phase.WAIT_GROTTO || phase == Phase.RING || phase == Phase.HOME || phase == Phase.COVER) return
+		if (phase == Phase.WAIT_GROTTO || phase == Phase.RING || phase == Phase.COVER) return
 		phase = Phase.SEEK
 		stillTicks = 0
 		lastX = Double.NaN
 		lastZ = Double.NaN
 		dock.clear()
 		runner.release(Minecraft.getInstance())
+	}
+
+	private fun syncDuty(client: Minecraft) {
+		val here = FishingWorld.current
+		if (here?.kind != SpotKind.GROTTO && RouteSettings.isGrottoScanId(IslandCycle.armedScan ?: "")) {
+			IslandCycle.armedScan = null
+		}
+		if (abandonGrotto && here?.kind != SpotKind.GROTTO) abandonGrotto = false
+		if (!abandonGrotto) {
+			val grotto = pendingGrotto ?: here?.takeIf { it.kind == SpotKind.GROTTO }
+			if (grotto != null) RouteSettings.noteGrotto(grotto.climate.name)
+		}
+		val duty = IslandCycle.duty
+		if (!duty.isNullOrBlank()) RouteSettings.noteIsland(duty)
+		val dest = forcedDest
+		if (dest != null && here != null && arrivedAt(dest, here)) {
+			forcedDest = null
+			travelNow = false
+			val screen = client.gui.screen()
+			if (screen is net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<*> ||
+				screen is net.minecraft.client.gui.screens.inventory.InventoryScreen
+			) {
+				client.gui.setScreen(null)
+			}
+			if (resumeAfterSpawn) {
+				resumeAfterSpawn = false
+				resumeFishing(here)
+			} else if (here.kind == SpotKind.GROTTO) {
+				startGrottoWork(here)
+			} else if (here.shortId.equals(duty, ignoreCase = true)) {
+				startDutyWork(here)
+			}
+		}
+	}
+
+	private fun resumeFishing(place: FishingPlace) {
+		plan = null
+		fishPending = true
+		stillTicks = 0
+		phase = Phase.SEEK
+		if (place.kind == SpotKind.GROTTO) {
+			IslandCycle.armedScan = place.shortId.uppercase()
+			startGrottoFish()
+			fishPending = true
+			return
+		}
+		IslandCycle.job = IslandJob.FISH
+		IslandCycle.armedScan = place.shortId.uppercase()
+	}
+
+	private fun startDutyWork(place: FishingPlace) {
+		val id = place.shortId.uppercase()
+		if (IslandCycle.job == IslandJob.FISH) {
+			if (phase != Phase.SEEK) phase = Phase.SEEK
+			fishPending = true
+			return
+		}
+		if (phase == Phase.RING && IslandCycle.armedScan == id) return
+		IslandCycle.armedScan = id
+		IslandCycle.job = IslandJob.SCAN
+		if (!startScan(place)) {
+			phase = Phase.SEEK
+			fishPending = true
+		}
+	}
+
+	private fun arrivedAt(dest: String, place: FishingPlace): Boolean {
+		if (place.kind == SpotKind.GROTTO) return place.climate.name.equals(dest, ignoreCase = true)
+		return place.shortId.equals(dest, ignoreCase = true)
+	}
+
+	private fun requestIslandTravel(dest: String) {
+		val id = dest.uppercase()
+		if (forcedDest.equals(id, ignoreCase = true) && !MenuClicker.idle()) return
+		forcedDest = id
+		travelNow = true
+		travelCooldown = 0
+		if (phase == Phase.WAIT_GROTTO) phase = Phase.SEEK
+		dock.clear()
+	}
+
+	private fun leaveDepletedGrotto(client: Minecraft, player: net.minecraft.world.entity.player.Player) {
+		val here = FishingWorld.current
+		if (here == null || here.kind != SpotKind.GROTTO || abandonGrotto) return
+		val spots = SpotPool.all().filter { it.place == here }
+		if (spots.isEmpty() || spots.any { it.stock != StockLevel.DEPLETED }) return
+		abandonGrotto = true
+		pendingGrotto = null
+		RouteSettings.clearScanned(here.shortId)
+		if (IslandCycle.armedScan.equals(here.shortId, ignoreCase = true)) IslandCycle.armedScan = null
+		RouteSettings.noteGrotto("")
+		val next = pickIsland(IslandCycle.enabledOrder(), RouteSettings.scanned, RouteSettings.finished)
+		if (next == null) {
+			player.sendSystemMessage(Component.literal("Realwayfinder Grotto 已耗尽"))
+			return
+		}
+		IslandCycle.duty = next.id
+		IslandCycle.job = next.job
+		IslandCycle.returnedFor = next.id
+		IslandCycle.waiting = true
+		player.sendSystemMessage(Component.literal("Realwayfinder Grotto 已耗尽，前往 ${next.id}"))
+		phase = Phase.SEEK
+		plan = null
+		requestIslandTravel(next.id)
+	}
+
+	private fun lobby(client: Minecraft): Boolean {
+		val objective = client.level?.scoreboard?.getDisplayObjective(DisplaySlot.SIDEBAR) ?: return false
+		return lobbyScoreboard(objective.displayName.string)
+	}
+
+	private fun ownScreen(client: Minecraft): Boolean {
+		val screen = client.gui.screen()
+		return screen is SetupScreen || screen is OverclockPage || screen is MoveScreen ||
+			screen is KeyScreen || screen is HudEditScreen
+	}
+
+	private fun driveMenus(client: Minecraft, player: net.minecraft.world.entity.player.Player) {
+		leaveDepletedGrotto(client, player)
+		if (joinTicks >= 0) return
+		val inLobby = lobby(client)
+		if (!inLobby) toldNoDestination = false
+		MenuClicker.tick(client, player)
+		if (!MenuClicker.idle() || ownScreen(client)) return
+		if (client.gui.screen() != null) return
+		if (inLobby || travelNow || forcedDest != null) {
+			if (travelCooldown > 0) {
+				travelCooldown--
+				return
+			}
+			val dest = forcedDest ?: travelDestination(
+				RouteSettings.dutyGrotto,
+				IslandCycle.enabledOrder(),
+				RouteSettings.scanned,
+				RouteSettings.finished
+			)
+			if (dest == null) {
+				if (!toldNoDestination) {
+					toldNoDestination = true
+					player.sendSystemMessage(Component.literal("Realwayfinder 没有要去的岛"))
+				}
+			} else {
+				MenuClicker.startTravel(dest)
+			}
+			travelNow = false
+			travelCooldown = 40
+			return
+		}
+		val chosen = plan ?: return
+		if (phase != Phase.SEEK || !fishPlan(chosen)) return
+		if (ocCooldown > 0) {
+			ocCooldown--
+			return
+		}
+		val spot = SpotPool.all().firstOrNull { it.x == chosen.spotX && it.y == chosen.spotY && it.z == chosen.spotZ } ?: return
+		val oc = RoutePlanner.overclockFor(spot) ?: return
+		val triple = oc.second
+		val hook = triple.hook.perkName()
+		val magnet = triple.magnet.perkName()
+		val rod = triple.rod.perkName()
+		if (OcCache.matches(oc.first, hook, magnet, rod)) {
+			if (!triple.kept()) MenuClicker.showIdle("Overclock 相符")
+			return
+		}
+		MenuClicker.startSupplies(oc.first, oc.second)
+		ocCooldown = 40
+	}
+
+	private fun fishPlan(chosen: PlannedRoute): Boolean =
+		chosen.spotLabel.isNotEmpty() && chosen.spotLabel != "扫点" && chosen.spotLabel != "回出生点" && chosen.spotLabel != "回放"
+
+	private fun waitingForOverclock(client: Minecraft, chosen: PlannedRoute?): Boolean {
+		if (MenuClicker.holdingCast()) return true
+		if (client.gui.screen() != null || chosen == null || !fishPlan(chosen)) return false
+		val spot = SpotPool.all().firstOrNull { it.x == chosen.spotX && it.y == chosen.spotY && it.z == chosen.spotZ } ?: return false
+		val oc = RoutePlanner.overclockFor(spot) ?: return false
+		return !OcCache.matches(oc.first, oc.second.hook.perkName(), oc.second.magnet.perkName(), oc.second.rod.perkName())
 	}
 
 	private fun noteArrival(
@@ -1114,85 +1217,6 @@ object RouteRuntime {
 		return flat <= 5.0 && kotlin.math.abs(end.y - target.y) <= 3
 	}
 
-	private fun tickScript(client: Minecraft, player: net.minecraft.world.entity.player.Player) {
-		val frames = script
-		if (frames == null) {
-			phase = Phase.SEEK
-			return
-		}
-		val open = client.gui.screen()
-		val name = open?.javaClass?.simpleName
-		if (open is PauseScreen || open is ChatScreen || name == "ChatScreen") {
-			tapePlayer.release(client)
-			return
-		}
-		tapePlayer.tick(client, player, frames, screenOpen = false)
-		plan = PlannedRoute("回放", "${frames.size}", null, null, "回放", 0, 0, 0)
-		if (tapePlayer.failed) {
-			script = null
-			phase = Phase.SEEK
-			tapePlayer.reset()
-			player.sendSystemMessage(Component.literal("Realwayfinder 格子点击失败，脚本停止"))
-			return
-		}
-		if (tapePlayer.done) {
-			val role = scriptRole
-			script = null
-			scriptRole = null
-			plan = null
-			tapePlayer.reset()
-			if (role == ScriptRole.SCAN) {
-				player.sendSystemMessage(Component.literal("Realwayfinder 扫点回放结束"))
-				FishingWorld.current?.shortId?.let { RouteSettings.markScanned(it) }
-				fishDelay = 60
-				phase = Phase.WAIT_FISH
-			} else if (role == ScriptRole.RETURN) {
-				player.sendSystemMessage(Component.literal("Realwayfinder 回出生点结束"))
-				runner.clearRepeat()
-				val scanId = scanAfterReturnId
-				scanAfterReturnId = null
-				if (scanId != null) {
-					startIslandScan(scanId)
-				} else if (homeThenFish) {
-					homeThenFish = false
-					pendingPlace = null
-					plan = null
-					fishPending = true
-					RouteSettings.enabled = true
-					RouteSettings.save()
-					phase = Phase.SEEK
-				} else if (scanAfterHome) {
-					scanAfterHome = false
-					val place = pendingPlace
-					if (place != null) {
-						skipHome = true
-						beginScript(place, ScriptRole.SCAN)
-					} else {
-						phase = Phase.SEEK
-					}
-				} else {
-					phase = Phase.SEEK
-				}
-			} else if (role == ScriptRole.ENTER) {
-				player.sendSystemMessage(Component.literal("Realwayfinder 进入回放结束"))
-				val here = FishingWorld.current
-				if (pendingGrotto != null && here == pendingGrotto) {
-					beginGrottoRoute(player)
-				} else {
-					phase = if (pendingGrotto != null) Phase.WAIT_GROTTO else Phase.SEEK
-				}
-			} else if (role == null) {
-				player.sendSystemMessage(Component.literal("Realwayfinder 回放结束"))
-				phase = Phase.SEEK
-			} else {
-				stillTicks = 0
-				lastX = Double.NaN
-				lastZ = Double.NaN
-				phase = Phase.SEEK
-			}
-		}
-	}
-
 	private fun emptyDenied(place: FishingPlace?): PlannedRoute {
 		val status = if (place == null) "不在钓鱼岛" else "未选择 ${place.shortId}"
 		return PlannedRoute("", "", null, null, status, 0, 0, 0)
@@ -1244,13 +1268,6 @@ object RealwayfinderClient : ClientModInitializer {
 		category
 	)
 
-	val record = KeyMapping(
-		"key.realwayfinder.record",
-		InputConstants.Type.KEYSYM,
-		GLFW.GLFW_KEY_R,
-		category
-	)
-
 	val skip = KeyMapping(
 		"key.realwayfinder.skip",
 		InputConstants.Type.KEYSYM,
@@ -1274,13 +1291,12 @@ object RealwayfinderClient : ClientModInitializer {
 
 	override fun onInitializeClient() {
 		RouteSettings.load()
+		OverclockFile.load()
 		RouteMemoryStore.load()
-		ScanRecord.loadAll()
 		KeyMappingHelper.registerKeyMapping(toggle)
 		KeyMappingHelper.registerKeyMapping(setup)
 		KeyMappingHelper.registerKeyMapping(scan)
 		KeyMappingHelper.registerKeyMapping(skip)
-		KeyMappingHelper.registerKeyMapping(record)
 		KeyMappingHelper.registerKeyMapping(resetPath)
 		RouteOverlay.register()
 		val onMessage: (Component) -> Unit = { message -> RouteRuntime.onChat(message.string) }
@@ -1289,7 +1305,7 @@ object RealwayfinderClient : ClientModInitializer {
 		ClientTickEvents.END_CLIENT_TICK.register { client ->
 			val screen = client.gui.screen()
 			val typing = screen is ChatScreen
-			if (!typing && Hotkeys.consume(toggle, RouteSettings.modToggle) && screen !is ScriptScreen && screen !is KeyScreen) {
+			if (!typing && Hotkeys.consume(toggle, RouteSettings.modToggle) && screen !is KeyScreen) {
 				RouteSettings.enabled = !RouteSettings.enabled
 				RouteSettings.save()
 				if (RouteSettings.enabled) {
@@ -1306,17 +1322,8 @@ object RealwayfinderClient : ClientModInitializer {
 			}
 			if (!typing && Hotkeys.consume(scan, RouteSettings.modScan)) RouteRuntime.toggleScan()
 			if (!typing && Hotkeys.consume(skip, RouteSettings.modSkip)) RouteRuntime.skipScanPoint()
-			if (!typing && Hotkeys.consume(resetPath, RouteSettings.modReset) && screen !is ScriptScreen && screen !is KeyScreen) {
+			if (!typing && Hotkeys.consume(resetPath, RouteSettings.modReset) && screen !is KeyScreen) {
 				RouteRuntime.resetRoute()
-			}
-			if (screen == null && !typing) {
-				if (Hotkeys.consume(record, RouteSettings.modRecord)) {
-					val player = client.player
-					if (player != null) {
-						if (ScanRecord.recording) ScanRecord.stop(player)
-						else client.gui.setScreen(ScriptScreen(null))
-					}
-				}
 			}
 			RouteRuntime.tick()
 		}

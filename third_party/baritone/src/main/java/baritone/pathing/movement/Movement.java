@@ -124,7 +124,18 @@ public abstract class Movement implements IMovement, MovementHelper {
         ctx.player().getAbilities().flying = false;
         currentState = updateState(currentState);
         if (MovementHelper.isLiquid(ctx, ctx.playerFeet()) && ctx.player().position().y < dest.y + 0.6) {
-            currentState.setInput(Input.JUMP, true);
+            BlockPos feet = ctx.playerFeet();
+            BlockStateInterface bsi = new BlockStateInterface(ctx);
+            double room = MovementHelper.waterHeadroom(bsi, feet.getX(), feet.getY(), feet.getZ());
+            if (MovementHelper.isWater(ctx, dest)) {
+                room = Math.min(room, MovementHelper.waterHeadroom(bsi, dest.getX(), dest.getY(), dest.getZ()));
+            }
+            if (room < 2.0 && ctx.player().position().y > feet.getY() + 0.15) {
+                currentState.setInput(Input.JUMP, false);
+                currentState.setInput(Input.SNEAK, true);
+            } else {
+                currentState.setInput(Input.JUMP, true);
+            }
         }
         if (ctx.player().isInWall()) {
             ctx.getSelectedBlock().ifPresent(pos -> MovementHelper.switchToBestToolFor(ctx, BlockStateInterface.get(ctx, pos)));

@@ -87,6 +87,8 @@ object BaritoneNav {
 		settings.freeLook.value = false
 		settings.allowSprint.value = true
 		settings.sprintInWater.value = false
+		settings.allowWalkOnMagmaBlocks.value = false
+		settings.assumeWalkOnLava.value = false
 		ready = true
 	}
 }

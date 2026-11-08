@@ -104,8 +104,13 @@ object RouteOverlay {
 		val line = SpotLines.lineH(font)
 		var blockW = font.width("当前点位")
 		var blockH = 0
+		val menuLine = MenuClicker.hud
 		if (scanning) {
 			blockW = maxOf(blockW, font.width(scanLabel))
+			blockH += line
+		}
+		if (menuLine.isNotEmpty()) {
+			blockW = maxOf(blockW, font.width(menuLine))
 			blockH += line
 		}
 		val missing = Component.literal("无").withStyle(Style.EMPTY.withColor(0xAAAAAA))
@@ -125,6 +130,10 @@ object RouteOverlay {
 		val textX = x + pad
 		if (scanning) {
 			graphics.text(font, Component.literal(scanLabel), textX, cursor, 0xFF55FF55.toInt(), false)
+			cursor += line
+		}
+		if (menuLine.isNotEmpty()) {
+			graphics.text(font, Component.literal(menuLine), textX, cursor, 0xFF55FF55.toInt(), false)
 			cursor += line
 		}
 		for ((title, lineParts) in parts) {

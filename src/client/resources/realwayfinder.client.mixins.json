@@ -3,7 +3,7 @@
 	"package": "kcl.realwayfinder.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"ContainerClickMixin"
+		"ActionBarMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

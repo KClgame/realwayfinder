@@ -40,6 +40,8 @@ object RouteSettings {
 	val scanned: LinkedHashSet<String> = linkedSetOf()
 	val finished: LinkedHashSet<String> = linkedSetOf()
 	var scannedHour: Long = -1L
+	var dutyIsland: String = ""
+	var dutyGrotto: String = ""
 
 	private val path = FabricLoader.getInstance().configDir.resolve("realwayfinder").resolve("client.txt")
 
@@ -135,6 +137,8 @@ object RouteSettings {
 					finished.clear()
 					parts[1].split(',').map { it.trim().uppercase() }.filter { it.isNotEmpty() }.forEach { finished.add(it) }
 				}
+				"dutyIsland" -> dutyIsland = parts[1].trim().uppercase()
+				"dutyGrotto" -> dutyGrotto = parts[1].trim().uppercase()
 			}
 		}
 		for (target in FishTarget.entries) if (target !in fishOrder) fishOrder.add(target)
@@ -158,6 +162,11 @@ object RouteSettings {
 		write()
 	}
 
+	fun clearScanned(id: String) {
+		if (!scanned.remove(id.uppercase())) return
+		write()
+	}
+
 	fun markFinished(id: String) {
 		if (!finished.add(id.uppercase())) return
 		write()
@@ -178,6 +187,20 @@ object RouteSettings {
 		scanned.removeAll { !isGrottoScanId(it) }
 		finished.clear()
 		scannedHour = hourNow()
+		write()
+	}
+
+	fun noteIsland(id: String) {
+		val next = id.uppercase()
+		if (dutyIsland == next) return
+		dutyIsland = next
+		write()
+	}
+
+	fun noteGrotto(id: String) {
+		val next = id.uppercase()
+		if (dutyGrotto == next) return
+		dutyGrotto = next
 		write()
 	}
 
@@ -223,6 +246,8 @@ object RouteSettings {
 			append("scannedHour=").append(scannedHour).append('\n')
 			append("scanned=").append(scanned.joinToString(",")).append('\n')
 			append("finished=").append(finished.joinToString(",")).append('\n')
+			append("dutyIsland=").append(dutyIsland).append('\n')
+			append("dutyGrotto=").append(dutyGrotto).append('\n')
 		}
 		Files.writeString(path, text, StandardCharsets.UTF_8)
 	}

@@ -90,34 +90,6 @@ class RouteTest {
 	}
 
 	@Test
-	fun tapePlaysOneTickAtATime() {
-		val frames = listOf(
-			TickInput(0.0, 64.0, 0.0, 10f, 0f, 0, true, false, false, false, false, false, false, false, false),
-			TickInput(1.0, 64.0, 0.0, 20f, 0f, 2, true, false, false, false, true, true, false, true, false, attackClick = true, slot = 36, item = "minecraft:fishing_rod"),
-			TickInput(2.0, 65.0, 0.0, 20f, 0f, 2, false, false, false, false, false, false, false, false, false)
-		)
-		val play = TickReplay()
-		val first = play.tick(frames)
-		assertNotNull(first)
-		assertTrue(first.forward)
-		assertTrue(!first.jump)
-		val second = play.tick(frames)
-		assertNotNull(second)
-		assertTrue(second.jump)
-		assertTrue(second.attackClick)
-		assertEquals(36, second.slot)
-		assertEquals(2, second.hotbar)
-		play.tick(frames)
-		assertNull(play.tick(frames))
-		val loaded = parseTape(formatTape(frames))
-		assertEquals(3, loaded.size)
-		assertEquals("minecraft:fishing_rod", loaded[1].item)
-		val click = parseTape(formatTape(listOf(frames[1].copy(slotAction = "QUICK_MOVE", slotButton = 0))))
-		assertEquals("QUICK_MOVE", click[0].slotAction)
-		assertEquals(20f, loaded[1].yaw)
-	}
-
-	@Test
 	fun pathExecAdvancesWhenFeetEnterTheDest() {
 		val steps = listOf(
 			RouteStep(Node(0, 64, 0, Mode.LAND), EdgeKind.WALK),
@@ -147,6 +119,9 @@ class RouteTest {
 	@Test
 	fun temperateDiscoveryTextStartsEntry() {
 		assertTrue(temperateDiscovery("You've discovered a Temperate Grotto! Travel there through your navigator."))
+		assertTrue(hubPrompt("Enter /hub to leave"))
+		assertTrue(hubPrompt("§cEnter /hub"))
+		assertTrue(!hubPrompt("Enter the grotto"))
 		assertTrue(tropicalDiscovery("You've discovered a Tropical Grotto! Travel there through your navigator."))
 		assertTrue(!temperateDiscovery("You've discovered a Tropical Grotto! Travel there through your navigator."))
 		assertTrue(!tropicalDiscovery("You've discovered a Temperate Grotto! Travel there through your navigator."))
@@ -636,16 +611,15 @@ class RouteTest {
 		assertNotNull(first)
 		assertEquals(-207, first.first().x)
 		assertEquals(153, first.first().z)
-		assertEquals(8, first.size)
+		assertEquals(7, first.size)
 		assertEquals(-328, first[1].x)
 		assertEquals(151, first[1].y)
 		assertEquals(210, first[1].z)
 		assertEquals(-352, first[3].x)
 		assertEquals(314, first[3].z)
-		assertEquals(-206, first[6].x)
-		assertEquals(382, first[6].z)
-		assertEquals(-155, first.last().x)
-		assertEquals(260, first.last().z)
+		assertEquals(-206, first.last().x)
+		assertEquals(153, first.last().y)
+		assertEquals(382, first.last().z)
 		assertEquals(8, BuiltInRoutes.island("I2")?.size)
 		assertEquals(8, BuiltInRoutes.island("I3")?.size)
 		val island4 = BuiltInRoutes.island("I4")
@@ -991,6 +965,106 @@ class RouteTest {
 			}
 		}
 		return false
+	}
+
+	@Test
+	fun lowWaterSinksWhenTheCeilingIsUnderTwoBlocks() {
+		assertEquals(2.0, waterHeadroom(listOf(1.0, 1.0)))
+		assertEquals(1.0, waterHeadroom(listOf(1.0, 0.0)))
+		assertEquals(1.5, waterHeadroom(listOf(1.0, 0.5)))
+		assertEquals(0.0, waterHeadroom(listOf(0.0)))
+		assertEquals(0.5, waterHeadroom(listOf(0.5)))
+		assertTrue(lowWaterPassable(2.0, 1))
+		assertTrue(lowWaterPassable(1.0, 1))
+		assertTrue(lowWaterPassable(0.0, 2))
+		assertTrue(!lowWaterPassable(0.0, 1))
+	}
+
+	@Test
+	fun standAndSpotMustHaveOnlyAirBetweenThem() {
+		val blocked = setOf(1 to 0)
+		val air: (Int, Int, Int) -> Boolean = { x, y, z -> !(y == 1 && blocked.any { it.first == x && it.second == z }) }
+		assertTrue(openAirBetween(0, 1, 0, 1, 1, 0, air))
+		assertTrue(!openAirBetween(0, 1, 0, 2, 1, 0, air))
+		val clear: (Int, Int, Int) -> Boolean = { _, _, _ -> true }
+		assertTrue(openAirBetween(0, 1, 0, 4, 1, 0, clear))
+		val spotIsWater: (Int, Int, Int) -> Boolean = { x, y, z -> !(x == 3 && y == 1 && z == 0) }
+		assertTrue(openAirBetween(0, 1, 0, 3, 1, 0, spotIsWater))
+	}
+
+	@Test
+	fun gridRefusesASizeThatOverflowsTheArray() {
+		assertNull(Grid.cellCount(0, 4, 4))
+		assertNull(Grid.cellCount(50_000, 400, 50_000))
+		assertEquals(64, Grid.cellCount(4, 4, 4))
+	}
+
+	@Test
+	fun overclockTextIsTheFixedPerkLine() {
+		assertEquals("Strong Hook", readPerkLine(listOf("Cost", "Overclocked Perk:", "> Strong Hook")))
+		assertNull(readPerkLine(listOf("Overclocked Perk:", "")))
+		assertNull(readPerkLine(listOf("Overclocked Perk:", "> Not A Perk")))
+		assertEquals("Strong Hook", readPerk(listOf("Overclocked Perk:", "> Strong Hook"), "fishing/overclock/wise_hook"))
+		assertEquals("Wise Hook", readPerk(emptyList(), "mcc:island_interface/fishing/overclock/wise_hook_glow"))
+		assertEquals(1, clicksUntil(HOOK_NAMES, "Lucky Hook", "Strong Hook"))
+		assertEquals(4, clicksUntil(HOOK_NAMES, "Strong Hook", "Lucky Hook"))
+		assertEquals(0, clicksUntil(HOOK_NAMES, "Strong Hook", "Strong Hook"))
+		assertEquals(HookPick.WISE, advance(HookPick.entries, HookPick.STRONG))
+		assertEquals(HookPick.KEEP, advance(HookPick.entries, HookPick.LUCKY))
+	}
+
+	@Test
+	fun overclockProfilesStayOnTheirOwnRows() {
+		assertEquals(IslandOc.FISH, islandOc(FishTarget.WISE))
+		assertEquals(IslandOc.FISH, islandOc(FishTarget.STRONG))
+		assertEquals(IslandOc.FISH, islandOc(FishTarget.ELUSIVE))
+		assertEquals(IslandOc.XP_WAYFINDER, islandOc(FishTarget.XP))
+		assertEquals(IslandOc.XP_WAYFINDER, islandOc(FishTarget.WAYFINDER))
+		val order = listOf(FishTarget.WISE, FishTarget.XP, FishTarget.PEARL)
+		val enabled = setOf(FishTarget.WISE, FishTarget.XP)
+		assertEquals(FishTarget.XP, islandLead(0, 0, -1, -1, -1, -1, -1, order, enabled, xp = 40))
+		assertTrue(islandSpotQualifies(0, 0, -1, -1, -1, -1, -1, setOf(FishTarget.XP), xp = 10))
+		assertTrue(!islandSpotQualifies(0, 0, -1, -1, -1, -1, -1, setOf(FishTarget.XP), xp = 0))
+		assertEquals(GrottoKind.MAGNET_FISH, grottoKindOf(200, 5, 1, 1, 1, 1))
+		assertEquals(GrottoKind.PEARL, grottoKindOf(0, -1, -1, 4, -1, -1))
+	}
+
+	@Test
+	fun travelGoesToTheGrottoBeforeAnUnfinishedIsland() {
+		assertEquals("TEMPERATE", travelDestination("Temperate", listOf("I1", "I2"), emptySet(), emptySet()))
+		assertEquals("I2", travelDestination("", listOf("I1", "I2"), setOf("I1", "I2"), setOf("I1")))
+		assertEquals("I1", travelDestination("", listOf("I1", "I2"), emptySet(), emptySet()))
+		assertNull(travelDestination("", listOf("I1"), setOf("I1"), setOf("I1")))
+		assertTrue(lobbyScoreboard("§aMCCI: MAIN ISLAND"))
+		assertTrue(!lobbyScoreboard("MCCI: Verdant Woods"))
+		assertEquals("I1", placeId("Verdant Woods", emptyList(), "island_interface/fishing/island/floral_forest"))
+		assertEquals("I1", placeId("", emptyList(), "mcc:island_interface/fishing/island/verdant_woods_glow"))
+		assertTrue(isEchoShard("minecraft:echo_shard"))
+		assertTrue(isEchoShard("item.minecraft.echo_shard"))
+		assertTrue(!isEchoShard("minecraft:compass"))
+		assertEquals("I4", echoShardPlace("tropical overgrowth", emptyList()))
+		assertEquals(20, islandMenuSlot("I1"))
+		assertEquals(24, islandMenuSlot("temperate"))
+		assertEquals(33, islandMenuSlot("TROPICAL"))
+		assertEquals(42, islandMenuSlot("barren"))
+		assertEquals("I1", echoShardPlace("VERDANT WOODS", emptyList()))
+		assertEquals("TROPICAL", echoShardPlace("Tropical", emptyList()))
+		assertNull(echoShardPlace("Shop", emptyList()))
+		assertTrue(isFishingNav("Fishing", emptyList(), "island_interface/navigator/island"))
+		assertTrue(!isFishingNav("Shop", emptyList(), "island_interface/navigator/shop"))
+		assertTrue(isAnglrPanel("A.N.G.L.R. Panel", emptyList()))
+		assertTrue(isFishingSupplies("Fishing Supplies", emptyList()))
+		assertTrue(isTravelCompass("Compass", "minecraft:compass"))
+		val travel = travelScript()
+		assertEquals(listOf("open-inventory", "click-compass", "click-fishing", "click-island", "close"), travel)
+		assertTrue("baritone-stop" !in travel)
+		val supplies = suppliesScript(1, 0, 4)
+		assertEquals("open-inventory", supplies.first())
+		assertEquals("click-anglr-panel", supplies[1])
+		assertEquals("click-fishing-supplies", supplies[2])
+		assertEquals(1, supplies.count { it == "right-hook" })
+		assertEquals(4, supplies.count { it == "right-rod" })
+		assertTrue("baritone-stop" !in supplies)
 	}
 
 	private fun flat(length: Int, ground: Int) = Grid.build(0, 0, 0, length, ground + 4, 3) { x, y, z ->
