@@ -12,6 +12,12 @@ jobs:
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
+      - name: checkout spotfilter 1.9.8
+        uses: actions/checkout@v6
+        with:
+          repository: KClgame/SpotFilter
+          ref: bfdac6fefc405598e0bb10b9843ee3c55908b129
+          path: spotfilter
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
       - name: setup jdk
@@ -19,6 +25,9 @@ jobs:
         with:
           java-version: '25'
           distribution: 'microsoft'
+      - name: build spotfilter
+        working-directory: spotfilter
+        run: chmod +x ./gradlew && ./gradlew build -x test
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
       - name: build

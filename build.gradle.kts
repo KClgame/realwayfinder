@@ -51,8 +51,28 @@ dependencies {
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
     implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
-	implementation(files("E:/Mods/spotfilter/spotfilter-template-26.2/build/libs/spotfilter-1.9.8.jar"))
-	implementation(files("E:/Mods/KClutils/kcl-utils-template-26.2/build/libs/kcl-utils-1.1.0.jar"))
+	// SpotFilter is a compile dependency. GitHub Actions has no E: drive, so the workflow
+	// checks out KClgame/SpotFilter 1.9.8 (bfdac6fe) into spotfilter/ and builds that jar.
+	// This source does not reference KCl Utils. That jar is added only when it exists.
+	val compileMods = mutableListOf<File>()
+	fun addModJars(dir: File) {
+		if (!dir.isDirectory) return
+		dir.listFiles()?.filter { jar ->
+			jar.isFile && jar.name.endsWith(".jar") &&
+				!jar.name.endsWith("-sources.jar") &&
+				!jar.name.contains("-mc")
+		}?.let { compileMods.addAll(it) }
+	}
+	addModJars(file("libs"))
+	addModJars(file("spotfilter/build/libs"))
+	listOf(
+		"E:/Mods/spotfilter/spotfilter-template-26.2/build/libs/spotfilter-1.9.8.jar",
+		"E:/Mods/KClutils/kcl-utils-template-26.2/build/libs/kcl-utils-1.1.0.jar",
+	).map { file(it) }.filter { it.isFile }.let { compileMods.addAll(it) }
+	check(compileMods.any { it.name.startsWith("spotfilter-") }) {
+		"SpotFilter jar is missing. Put spotfilter-1.9.8.jar in libs/, or build https://github.com/KClgame/SpotFilter at bfdac6fe into spotfilter/build/libs."
+	}
+	implementation(files(compileMods.distinctBy { it.absolutePath }))
 
 	// Baritone elytra pathing. Nested so ElytraProcess can load. We do not call it.
 	val netherPathfinder = "dev.babbaj:nether-pathfinder:1.6"
