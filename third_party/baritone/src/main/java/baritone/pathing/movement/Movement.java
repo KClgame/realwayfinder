@@ -126,15 +126,27 @@ public abstract class Movement implements IMovement, MovementHelper {
         if (MovementHelper.isLiquid(ctx, ctx.playerFeet()) && ctx.player().position().y < dest.y + 0.6) {
             BlockPos feet = ctx.playerFeet();
             BlockStateInterface bsi = new BlockStateInterface(ctx);
-            double room = MovementHelper.waterHeadroom(bsi, feet.getX(), feet.getY(), feet.getZ());
-            if (MovementHelper.isWater(ctx, dest)) {
-                room = Math.min(room, MovementHelper.waterHeadroom(bsi, dest.getX(), dest.getY(), dest.getZ()));
+            // Headroom is the air above a water surface. A water cell above the feet means the
+            // body is already in the column, so swim. Sinking is only for a low surface.
+            double room = Double.POSITIVE_INFINITY;
+            boolean surface = false;
+            if (bsi.get0(feet.getX(), feet.getY() + 1, feet.getZ()).getFluidState().isEmpty()) {
+                room = MovementHelper.waterHeadroom(bsi, feet.getX(), feet.getY(), feet.getZ());
+                surface = true;
             }
-            if (room < 2.0 && ctx.player().position().y > feet.getY() + 0.15) {
+            if (MovementHelper.isWater(ctx, dest)
+                    && bsi.get0(dest.getX(), dest.getY() + 1, dest.getZ()).getFluidState().isEmpty()) {
+                room = Math.min(room, MovementHelper.waterHeadroom(bsi, dest.getX(), dest.getY(), dest.getZ()));
+                surface = true;
+            }
+            if (surface && room < 2.0 && ctx.player().position().y > feet.getY() + 0.15) {
                 currentState.setInput(Input.JUMP, false);
                 currentState.setInput(Input.SNEAK, true);
-            } else {
+            } else if (!surface || room >= 2.0) {
                 currentState.setInput(Input.JUMP, true);
+            } else {
+                currentState.setInput(Input.JUMP, false);
+                currentState.setInput(Input.SNEAK, false);
             }
         }
         if (ctx.player().isInWall()) {
