@@ -27,6 +27,8 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 		row("skip", RealwayfinderClient.skip, RouteSettings.modSkip, y)
 		y += 24
 		row("reset", RealwayfinderClient.resetPath, RouteSettings.modReset, y)
+		y += 24
+		row("drop", RealwayfinderClient.dropSpot, RouteSettings.modDrop, y)
 		addRenderableWidget(Button.builder(Component.literal("返回")) { _ -> onClose() }.bounds(width / 2 - 40, height - 28, 80, 20).build())
 	}
 
@@ -44,7 +46,7 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 	override fun extractRenderState(graphics: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta)
 		graphics.text(font, title, 12, 12, 0xFFFFFFFF.toInt(), false)
-		val names = listOf("开关", "配置", "扫点", "跳过", "录制", "重置寻路")
+		val names = listOf("开关", "配置", "扫点", "跳过扫点", "重置寻路", "删除点位")
 		names.forEachIndexed { index, name ->
 			graphics.text(font, name, 12, 42 + index * 24, 0xFFE0E0E0.toInt(), false)
 		}
@@ -60,6 +62,7 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 				2 -> RouteSettings.modScan = 0
 				3 -> RouteSettings.modSkip = 0
 				4 -> RouteSettings.modReset = 0
+				5 -> RouteSettings.modDrop = 0
 				else -> return super.mouseClicked(event, doubled)
 			}
 			recording = null
@@ -80,6 +83,7 @@ class KeyScreen(private val parent: Screen) : Screen(Component.literal("Realwayf
 					"scan" -> RouteSettings.modScan = event.key()
 					"skip" -> RouteSettings.modSkip = event.key()
 					"reset" -> RouteSettings.modReset = event.key()
+					"drop" -> RouteSettings.modDrop = event.key()
 				}
 				RouteSettings.save()
 			}

@@ -991,6 +991,9 @@ class RouteTest {
 		assertTrue(lowWaterPassable(1.0, 1))
 		assertTrue(lowWaterPassable(0.0, 2))
 		assertTrue(!lowWaterPassable(0.0, 1))
+		assertEquals(null, swimFeetLimit(40, 2.0))
+		assertEquals(39.15, swimFeetLimit(40, 0.0)!!, 0.001)
+		assertEquals(40.15, swimFeetLimit(40, 1.0)!!, 0.001)
 	}
 
 	@Test
@@ -1024,6 +1027,31 @@ class RouteTest {
 		assertEquals(0, clicksUntil(HOOK_NAMES, "Strong Hook", "Strong Hook"))
 		assertEquals(HookPick.WISE, advance(HookPick.entries, HookPick.STRONG))
 		assertEquals(HookPick.KEEP, advance(HookPick.entries, HookPick.LUCKY))
+		val sample = listOf(
+			"Unstable Overclock",
+			"Selected: Elusive Fish Chance",
+			"Duration: 5m",
+			"Cooldown: 45 minutes"
+		)
+		val read = readUnstable(sample)
+		assertEquals(UnstablePick.ELUSIVE, read.perk)
+		assertEquals(5L * 60_000L, read.durationMs)
+		assertEquals(45L * 60_000L, read.cooldownMs)
+		assertEquals(null, read.activeLeftMs)
+		val running = readUnstable(listOf(
+			"Active: Wayfinder Data",
+			"Duration remaining: 4m 10s",
+			"Cooldown: 45m"
+		))
+		assertEquals(UnstablePick.WAYFINDER, running.perk)
+		assertEquals(4L * 60_000L + 10_000L, running.activeLeftMs)
+		assertEquals(45L * 60_000L, running.cooldownMs)
+		val cooling = readUnstable(listOf("Cooldown remaining: 12m 5s"))
+		assertEquals(12L * 60_000L + 5_000L, cooling.cooldownLeftMs)
+		assertEquals(1_000L + 50L * 60_000L, nextUnstableUse(1_000L, 5L * 60_000L, 45L * 60_000L))
+		assertTrue(isUnstableItem("Unstable Overclock", listOf("Duration: 5m")))
+		assertTrue(!isUnstableItem("Wise Hook", listOf("Overclocked Perk:", "> Wise Hook")))
+		assertEquals(UnstablePick.OFF, advance(UnstablePick.entries, UnstablePick.SPIRIT))
 	}
 
 	@Test

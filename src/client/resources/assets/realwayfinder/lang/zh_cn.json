@@ -5,6 +5,7 @@
 	"key.realwayfinder.record": "Realwayfinder 录制扫点",
 	"key.realwayfinder.skip": "Realwayfinder 跳过扫点",
 	"key.realwayfinder.reset": "Realwayfinder 重置寻路",
+	"key.realwayfinder.drop": "Realwayfinder 删除当前点",
 	"key.category.realwayfinder.main": "Realwayfinder",
 	"keys.category.realwayfinder.main": "Realwayfinder"
 }

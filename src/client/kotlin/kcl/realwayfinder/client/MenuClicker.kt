@@ -3,6 +3,11 @@ package kcl.realwayfinder.client
 import kcl.realwayfinder.nav.HOOK_NAMES
 import kcl.realwayfinder.nav.MAGNET_NAMES
 import kcl.realwayfinder.nav.ROD_NAMES
+import kcl.realwayfinder.nav.UNSTABLE_NAMES
+import kcl.realwayfinder.nav.UnstablePick
+import kcl.realwayfinder.nav.isUnstableItem
+import kcl.realwayfinder.nav.menuLabel
+import kcl.realwayfinder.nav.readUnstable
 import kcl.realwayfinder.nav.clicksUntil
 import kcl.realwayfinder.nav.isAnglrPanel
 import kcl.realwayfinder.nav.isFishingNav
@@ -45,6 +50,8 @@ object MenuClicker {
 	private val clickQueue = ArrayList<Int>(8)
 	private var clickGap = 0
 	private var checks = 0
+	private var unstableTries = 0
+	private var unstableArmed = false
 	private var lastFail = ""
 	private var holdForward = false
 	private var holdBack = false
@@ -73,7 +80,8 @@ object MenuClicker {
 	}
 
 	fun startSupplies(key: String, triple: OcTriple) {
-		if (kind != null || OcCache.matches(key, triple.hook.perkName(), triple.magnet.perkName(), triple.rod.perkName())) return
+		val hooksMatch = OcCache.matches(key, triple.hook.perkName(), triple.magnet.perkName(), triple.rod.perkName())
+		if (kind != null || (hooksMatch && !unstableDue(triple.unstable))) return
 		profileKey = key
 		wanted = triple
 		kind = Kind.SUPPLIES
@@ -83,6 +91,8 @@ object MenuClicker {
 		clickQueue.clear()
 		clickGap = 0
 		checks = 0
+		unstableTries = 0
+		unstableArmed = false
 		hud = "Overclock 调整中"
 	}
 
@@ -185,6 +195,7 @@ object MenuClicker {
 			Step.ADJUST -> announce(client, player)
 			Step.BURST -> burst(client, player)
 			Step.VERIFY -> verify(client, player)
+			Step.UNSTABLE -> tickUnstable(client, player)
 			Step.CLOSE -> pressEscape(client)
 			else -> finish(client)
 		}
@@ -240,7 +251,10 @@ object MenuClicker {
 			player.sendSystemMessage(Component.literal(
 				"Realwayfinder Overclock 核对 Hook=${shown(hook)} Magnet=${shown(magnet)} Rod=${shown(rod)}"
 			))
-			step = Step.CLOSE
+			unstableTries = 0
+			unstableArmed = false
+			clickGap = 0
+			step = if (wanted.unstable == UnstablePick.OFF) Step.CLOSE else Step.UNSTABLE
 			return
 		}
 		checks++
@@ -261,6 +275,80 @@ object MenuClicker {
 		repeat(rodClicks) { clickQueue.add(14) }
 		clickGap = 0
 		step = Step.BURST
+	}
+
+	/**
+	 * Right click cycles the five bonuses. Shift-left enables it.
+	 * The item text supplies the duration and cooldown. The next enable is enable time plus both.
+	 */
+	private fun tickUnstable(client: Minecraft, player: Player) {
+		if (clickGap > 0) {
+			clickGap--
+			if (clickGap > 0) return
+		}
+		if (!title(client).contains("FISHING SUPPLIES", ignoreCase = true)) {
+			fail(client, player, "Unstable 时 Fishing Supplies 已关闭")
+			return
+		}
+		val slot = player.containerMenu.slots.firstOrNull { candidate ->
+			val stack = candidate.item
+			!stack.isEmpty && isUnstableItem(stack.hoverName.string, lore(stack))
+		}
+		if (slot == null) {
+			UnstableSchedule.holdUntil(System.currentTimeMillis() + 30_000L)
+			player.sendSystemMessage(Component.literal("Realwayfinder 没有 Unstable Overclock"))
+			step = Step.CLOSE
+			return
+		}
+		val read = readUnstable(lore(slot.item))
+		UnstableSchedule.absorb(read)
+		val wantedName = wanted.unstable.perkName()
+		val currentName = read.perk?.perkName()
+		if (currentName != wantedName) {
+			unstableTries++
+			if (currentName == null || unstableTries > UNSTABLE_NAMES.size) {
+				player.sendSystemMessage(Component.literal("Realwayfinder 没读到 Unstable 加成 ${shown(currentName)}"))
+				step = Step.CLOSE
+				return
+			}
+			containerClick(client, player, slot.index, 1, ContainerInput.PICKUP)
+			clickGap = 20
+			return
+		}
+		val now = System.currentTimeMillis()
+		if (!UnstableSchedule.ready(now) || read.activeLeftMs != null || read.cooldownLeftMs != null) {
+			val waitMs = (UnstableSchedule.readyAtMs - now).coerceAtLeast(0L)
+			player.sendSystemMessage(Component.literal("Realwayfinder Unstable 下次可用 ${waitText(waitMs)}"))
+			step = Step.CLOSE
+			return
+		}
+		val duration = read.durationMs
+		val cooldown = read.cooldownMs
+		if (duration == null || cooldown == null) {
+			UnstableSchedule.holdUntil(now + 30_000L)
+			player.sendSystemMessage(Component.literal("Realwayfinder 没读到 Unstable 的持续时间或冷却"))
+			step = Step.CLOSE
+			return
+		}
+		if (!unstableArmed) {
+			containerClick(client, player, slot.index, 0, ContainerInput.QUICK_MOVE)
+			UnstableSchedule.arm(now, duration, cooldown)
+			unstableArmed = true
+			clickGap = 20
+			player.sendSystemMessage(Component.literal(
+				"Realwayfinder Unstable 已启用 ${wanted.unstable.menuLabel()}，下次 ${waitText(duration + cooldown)}"
+			))
+			return
+		}
+		step = Step.CLOSE
+	}
+
+	private fun containerClick(client: Minecraft, player: Player, index: Int, button: Int, type: ContainerInput) {
+		try {
+			client.gameMode?.handleContainerInput(player.containerMenu.containerId, index, button, type, player)
+		} catch (_: RuntimeException) {
+			fail(client, player, "Unstable 点击失败")
+		}
 	}
 
 	/** One right-click, then one second before the next, so the server counts each cycle. */
@@ -460,8 +548,19 @@ object MenuClicker {
 		ADJUST,
 		BURST,
 		VERIFY,
+		UNSTABLE,
 		CLOSE
 	}
+}
+
+private fun unstableDue(pick: UnstablePick): Boolean =
+	pick != UnstablePick.OFF && UnstableSchedule.ready()
+
+private fun waitText(ms: Long): String {
+	val seconds = (ms / 1000L).coerceAtLeast(0L)
+	val minutes = seconds / 60L
+	val rest = seconds % 60L
+	return if (minutes > 0L) "${minutes}分${rest}秒" else "${rest}秒"
 }
 
 private fun lore(stack: ItemStack): List<String> {

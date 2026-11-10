@@ -20,11 +20,15 @@ object BaritoneNav {
 	private var goalRange = -1
 	private var reportArrival = false
 	private var arrival: BlockPos? = null
+	private var dropOnFail = false
+	private var pathFailed = false
 
-	fun go(x: Int, y: Int, z: Int, range: Int = 0, report: Boolean = false) {
+	fun go(x: Int, y: Int, z: Int, range: Int = 0, report: Boolean = false, dropOnFail: Boolean = false) {
 		configure()
 		reportArrival = report
-		if (x == goalX && y == goalY && z == goalZ && range == goalRange) return
+		if (x == goalX && y == goalY && z == goalZ && range == goalRange && this.dropOnFail == dropOnFail) return
+		this.dropOnFail = dropOnFail
+		pathFailed = false
 		goalX = x
 		goalY = y
 		goalZ = z
@@ -38,6 +42,16 @@ object BaritoneNav {
 		val hit = arrival
 		arrival = null
 		return hit
+	}
+
+	/** The current fishing goal had no path. One read clears it. Scan goals do not set this. */
+	fun takePathFailure(): BlockPos? {
+		if (!pathFailed || !dropOnFail || goalX == Int.MIN_VALUE) {
+			pathFailed = false
+			return null
+		}
+		pathFailed = false
+		return BlockPos(goalX, goalY, goalZ)
 	}
 
 	fun stop() {
@@ -67,6 +81,9 @@ object BaritoneNav {
 				override fun onPathEvent(event: PathEvent) {
 					if (event == PathEvent.AT_GOAL && reportArrival && goalX != Int.MIN_VALUE) {
 						arrival = BlockPos(goalX, goalY, goalZ)
+					}
+					if (event == PathEvent.CALC_FAILED && dropOnFail && goalX != Int.MIN_VALUE) {
+						pathFailed = true
 					}
 				}
 			})

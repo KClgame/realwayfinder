@@ -52,6 +52,7 @@ object RouteRuntime {
 	private var phase = Phase.SEEK
 	private var lastClearMs = 0L
 	private var lastHubMs = 0L
+	private var closeHubTicks = 0
 	private val dock = CastDock()
 	private val runner = PathRunner()
 	private var resumeAfterSpawn = false
@@ -94,6 +95,7 @@ object RouteRuntime {
 	/** Stance cells skipped for one fishing spot, until that spot is depleted. */
 	val droppedStances = HashMap<String, MutableSet<String>>()
 	val skippedSpots = HashSet<String>()
+	val deletedSpots = HashSet<String>()
 	private val biteFailures = HashMap<String, Int>()
 	private var biteSpot = ""
 	private var biteTicks = 0
@@ -101,6 +103,7 @@ object RouteRuntime {
 
 	fun tick() {
 		val client = Minecraft.getInstance()
+		closeHubChat(client)
 		val player = client.player
 		val level = client.level
 		if (player == null || level == null) {
@@ -189,6 +192,11 @@ object RouteRuntime {
 		val paused = false
 		var blocked = false
 		val current = plan
+		val failed = BaritoneNav.takePathFailure()
+		if (failed != null && current != null && fishPlan(current)) {
+			deleteSpot(current.spotX, current.spotY, current.spotZ, "无法到达，已删除")
+			return
+		}
 		val onGoal = atCast(player, current)
 		val walking = BaritoneNav.busy()
 		if (onGoal && current != null) rememberSuccess(current.spotX, current.spotZ)
@@ -294,7 +302,7 @@ object RouteRuntime {
 			runner.release(client)
 		} else {
 			val dest = fishingPlan.stand ?: fishingPlan.cast?.stance
-			if (dest != null) BaritoneNav.go(dest.x, dest.y, dest.z, report = true)
+			if (dest != null) BaritoneNav.go(dest.x, dest.y, dest.z, report = true, dropOnFail = true)
 			else BaritoneNav.stop()
 			runner.release(client)
 		}
@@ -373,6 +381,33 @@ object RouteRuntime {
 		Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder 扫点中断"))
 	}
 
+	fun deleteCurrentSpot() {
+		val chosen = plan
+		val player = Minecraft.getInstance().player
+		if (chosen == null || !fishPlan(chosen)) {
+			player?.sendSystemMessage(Component.literal("Realwayfinder 没有在钓的点"))
+			return
+		}
+		deleteSpot(chosen.spotX, chosen.spotY, chosen.spotZ, "已删除")
+	}
+
+	private fun deleteSpot(x: Int, y: Int, z: Int, reason: String) {
+		val id = "$x,$y,$z"
+		deletedSpots.add(id)
+		skippedSpots.add(id)
+		for (spot in SpotPool.all().filter { it.x == x && it.y == y && it.z == z }) {
+			SpotPool.remove(spot.key)
+		}
+		plan = null
+		fishPending = true
+		dock.clear()
+		stillTicks = 0
+		BaritoneNav.stop()
+		RoutePlanner.cancel()
+		runner.release(Minecraft.getInstance())
+		Minecraft.getInstance().player?.sendSystemMessage(Component.literal("Realwayfinder $reason $x $y $z"))
+	}
+
 	fun skipScanPoint() {
 		if (phase != Phase.RING) return
 		ringIndex++
@@ -424,8 +459,15 @@ object RouteRuntime {
 		val player = client.player ?: return
 		client.gui.setScreen(net.minecraft.client.gui.screens.ChatScreen("/hub", true))
 		player.connection.sendCommand("hub")
+		closeHubTicks = 40
 		client.gui.setScreen(null)
 		player.sendSystemMessage(Component.literal("Realwayfinder /hub"))
+	}
+
+	private fun closeHubChat(client: Minecraft) {
+		if (closeHubTicks <= 0) return
+		closeHubTicks--
+		if (client.gui.screen() is ChatScreen) client.gui.setScreen(null)
 	}
 
 	fun onChat(text: String) {
@@ -490,6 +532,7 @@ object RouteRuntime {
 		val place = FishingWorld.current
 		RouteSettings.resetScanned()
 		skippedSpots.clear()
+		deletedSpots.clear()
 		biteFailures.clear()
 		IslandCycle.resetToTop()
 		val player = Minecraft.getInstance().player
@@ -1114,7 +1157,9 @@ object RouteRuntime {
 		val hook = triple.hook.perkName()
 		val magnet = triple.magnet.perkName()
 		val rod = triple.rod.perkName()
-		if (OcCache.matches(oc.first, hook, magnet, rod)) {
+		val hooksMatch = OcCache.matches(oc.first, hook, magnet, rod)
+		val unstableDue = triple.unstable != kcl.realwayfinder.nav.UnstablePick.OFF && UnstableSchedule.ready()
+		if (hooksMatch && !unstableDue) {
 			if (!triple.kept()) MenuClicker.showIdle("Overclock 相符")
 			return
 		}
@@ -1130,7 +1175,9 @@ object RouteRuntime {
 		if (client.gui.screen() != null || chosen == null || !fishPlan(chosen)) return false
 		val spot = SpotPool.all().firstOrNull { it.x == chosen.spotX && it.y == chosen.spotY && it.z == chosen.spotZ } ?: return false
 		val oc = RoutePlanner.overclockFor(spot) ?: return false
-		return !OcCache.matches(oc.first, oc.second.hook.perkName(), oc.second.magnet.perkName(), oc.second.rod.perkName())
+		val hooksMatch = OcCache.matches(oc.first, oc.second.hook.perkName(), oc.second.magnet.perkName(), oc.second.rod.perkName())
+		val unstableDue = oc.second.unstable != kcl.realwayfinder.nav.UnstablePick.OFF && UnstableSchedule.ready()
+		return !hooksMatch || unstableDue
 	}
 
 	private fun noteArrival(
@@ -1336,6 +1383,13 @@ object RealwayfinderClient : ClientModInitializer {
 		category
 	)
 
+	val dropSpot = KeyMapping(
+		"key.realwayfinder.drop",
+		InputConstants.Type.KEYSYM,
+		GLFW.GLFW_KEY_H,
+		category
+	)
+
 	override fun onInitializeClient() {
 		RouteSettings.load()
 		OverclockFile.load()
@@ -1345,6 +1399,7 @@ object RealwayfinderClient : ClientModInitializer {
 		KeyMappingHelper.registerKeyMapping(scan)
 		KeyMappingHelper.registerKeyMapping(skip)
 		KeyMappingHelper.registerKeyMapping(resetPath)
+		KeyMappingHelper.registerKeyMapping(dropSpot)
 		RouteOverlay.register()
 		val onMessage: (Component) -> Unit = { message -> RouteRuntime.onChat(message.string) }
 		ClientReceiveMessageEvents.GAME.register { message, _ -> onMessage(message) }
@@ -1371,6 +1426,9 @@ object RealwayfinderClient : ClientModInitializer {
 			if (!typing && Hotkeys.consume(skip, RouteSettings.modSkip)) RouteRuntime.skipScanPoint()
 			if (!typing && Hotkeys.consume(resetPath, RouteSettings.modReset) && screen !is KeyScreen) {
 				RouteRuntime.resetRoute()
+			}
+			if (!typing && Hotkeys.consume(dropSpot, RouteSettings.modDrop) && screen !is KeyScreen) {
+				RouteRuntime.deleteCurrentSpot()
 			}
 			RouteRuntime.tick()
 		}

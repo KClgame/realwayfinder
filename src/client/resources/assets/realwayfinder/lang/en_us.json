@@ -5,6 +5,7 @@
 	"key.realwayfinder.record": "Realwayfinder record scan",
 	"key.realwayfinder.skip": "Realwayfinder skip scan point",
 	"key.realwayfinder.reset": "Realwayfinder reset path",
+	"key.realwayfinder.drop": "Realwayfinder delete current spot",
 	"key.category.realwayfinder.main": "Realwayfinder",
 	"keys.category.realwayfinder.main": "Realwayfinder"
 }

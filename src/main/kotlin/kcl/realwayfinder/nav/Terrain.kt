@@ -58,6 +58,16 @@ fun waterHeadroom(above: List<Double>): Double {
 fun lowWaterPassable(headroom: Double, depth: Int): Boolean =
 	headroom >= 2.0 || headroom + depth >= 1.8
 
+/**
+ * Highest feet Y that keeps a 1.8 body under the ceiling.
+ * [surfaceY] is the top water block. Null means the surface is open and the swimmer stays up.
+ * The ceiling sits one block above the surface plus [headroom].
+ */
+fun swimFeetLimit(surfaceY: Int, headroom: Double): Double? {
+	if (headroom >= 2.0) return null
+	return surfaceY + headroom - 0.85
+}
+
 /** A tall block in the cell below sticks 0.5 into this cell. */
 fun tallReaches(grid: Grid, x: Int, y: Int, z: Int): Boolean = grid.get(x, y - 1, z) == Cell.TALL
 

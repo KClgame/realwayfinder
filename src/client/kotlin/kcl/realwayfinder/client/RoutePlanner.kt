@@ -270,6 +270,11 @@ object RoutePlanner {
 		return FloorCol.NONE to 0
 	}
 
+	private fun spotRemoved(spot: FishingSpot): Boolean {
+		val id = "${spot.x},${spot.y},${spot.z}"
+		return id in RouteRuntime.deletedSpots || id in RouteRuntime.skippedSpots
+	}
+
 	private fun rankIsland(
 		here: kcl.spotfilter.client.data.FishingPlace,
 		targets: Set<FishTarget>,
@@ -279,7 +284,7 @@ object RoutePlanner {
 		return SpotPool.all().mapNotNull { spot ->
 			if (spot.place != here || spot.kind == SpotKind.GROTTO) return@mapNotNull null
 			if (spot.stock == StockLevel.DEPLETED) return@mapNotNull null
-			if ("${spot.x},${spot.y},${spot.z}" in RouteRuntime.skippedSpots) return@mapNotNull null
+			if (spotRemoved(spot)) return@mapNotNull null
 			val xp = spot.perkValue(PerkType.XP_MAGNET)
 			if (!islandSpotQualifies(
 					spot.perkValue(PerkType.STRONG_HOOK),
@@ -323,6 +328,7 @@ object RoutePlanner {
 		return SpotPool.all().mapNotNull { spot ->
 			if (spot.place != here) return@mapNotNull null
 			if (spot.stock == StockLevel.DEPLETED) return@mapNotNull null
+			if (spotRemoved(spot)) return@mapNotNull null
 			val rank = grottoRank(spot, order, enabled) ?: return@mapNotNull null
 			spot to rank
 		}.sortedWith { left, right ->

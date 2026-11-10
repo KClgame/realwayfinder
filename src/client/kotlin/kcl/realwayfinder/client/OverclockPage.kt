@@ -3,7 +3,9 @@ package kcl.realwayfinder.client
 import kcl.realwayfinder.nav.HookPick
 import kcl.realwayfinder.nav.MagnetPick
 import kcl.realwayfinder.nav.RodPick
+import kcl.realwayfinder.nav.UnstablePick
 import kcl.realwayfinder.nav.advance
+import kcl.realwayfinder.nav.menuLabel
 import kcl.realwayfinder.nav.perkName
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.Button
@@ -38,14 +40,17 @@ class OverclockPage(
 		addRenderableWidget(button(8, 120, "Rod：${label(triple.rod.perkName())}", "左键切到下一项。保持表示不改游戏里的 Rod") {
 			onChange(triple.copy(rod = advance(RodPick.entries, triple.rod)))
 		})
-		addRenderableWidget(Button.builder(Component.literal("返回")) { _ -> onClose() }.bounds(8, 156, 80, 20).build())
+		addRenderableWidget(button(8, 144, "Unstable：${triple.unstable.menuLabel()}", "左键切换，含不启用。游戏里右键切换加成，Shift+左键启用。不要求和钓点的 Hook 一致。") {
+			onChange(triple.copy(unstable = advance(UnstablePick.entries, triple.unstable)))
+		})
+		addRenderableWidget(Button.builder(Component.literal("返回")) { _ -> onClose() }.bounds(8, 176, 80, 20).build())
 	}
 
 	override fun extractRenderState(graphics: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta)
 		graphics.fill(0, 0, width, 28, 0xF0101418.toInt())
 		graphics.text(font, heading, 8, 8, 0xFFFFFFFF.toInt(), false)
-		graphics.text(font, "只配置 Hook、Magnet、Rod", 8, 180, 0xFFAAAAAA.toInt(), false)
+		graphics.text(font, "Hook、Magnet、Rod，以及 Unstable。不启用则不点它", 8, 204, 0xFFAAAAAA.toInt(), false)
 	}
 
 	private fun label(name: String?): String = name ?: "保持"

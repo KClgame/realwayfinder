@@ -786,6 +786,29 @@ public interface MovementHelper extends ActionCosts, Helper {
         return headroom >= 2.0 || headroom + depth >= 1.8;
     }
 
+    /** Top water block of the column, walking up from y. */
+    static int waterSurfaceY(BlockStateInterface bsi, int x, int y, int z) {
+        int surface = y;
+        for (int i = 1; i <= 8; i++) {
+            if (!isWater(bsi.get0(x, y + i, z))) {
+                break;
+            }
+            surface = y + i;
+        }
+        return surface;
+    }
+
+    /**
+     * Highest feet Y that keeps a 1.8 body under the ceiling.
+     * NaN means the surface is open. Same numbers as swimFeetLimit in Terrain.kt.
+     */
+    static double swimFeetLimit(int surfaceY, double headroom) {
+        if (headroom >= 2.0) {
+            return Double.NaN;
+        }
+        return surfaceY + headroom - 0.85;
+    }
+
     static boolean isWater(BlockState state) {
         Fluid f = state.getFluidState().getType();
         return f == Fluids.WATER || f == Fluids.FLOWING_WATER;

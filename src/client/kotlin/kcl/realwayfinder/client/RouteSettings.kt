@@ -37,6 +37,7 @@ object RouteSettings {
 	var modRecord: Int = 0
 	var modSkip: Int = 0
 	var modReset: Int = 0
+	var modDrop: Int = 0
 	val scanned: LinkedHashSet<String> = linkedSetOf()
 	val finished: LinkedHashSet<String> = linkedSetOf()
 	var scannedHour: Long = -1L
@@ -128,6 +129,7 @@ object RouteSettings {
 				"modRecord" -> modRecord = parts[1].trim().toIntOrNull() ?: modRecord
 				"modSkip" -> modSkip = parts[1].trim().toIntOrNull() ?: modSkip
 				"modReset" -> modReset = parts[1].trim().toIntOrNull() ?: modReset
+				"modDrop" -> modDrop = parts[1].trim().toIntOrNull() ?: modDrop
 				"scannedHour" -> scannedHour = parts[1].trim().toLongOrNull() ?: scannedHour
 				"scanned" -> {
 					scanned.clear()
@@ -147,6 +149,8 @@ object RouteSettings {
 		scanned.addAll(grottoScanned)
 		finished.clear()
 		scannedHour = hourNow()
+		// Last session's grotto must not take the first trip after launch.
+		dutyGrotto = ""
 		write()
 		if (!sawFish && legacyBias != null) {
 			fishTargets.clear()
@@ -243,6 +247,7 @@ object RouteSettings {
 			append("modRecord=").append(modRecord).append('\n')
 			append("modSkip=").append(modSkip).append('\n')
 			append("modReset=").append(modReset).append('\n')
+			append("modDrop=").append(modDrop).append('\n')
 			append("scannedHour=").append(scannedHour).append('\n')
 			append("scanned=").append(scanned.joinToString(",")).append('\n')
 			append("finished=").append(finished.joinToString(",")).append('\n')
