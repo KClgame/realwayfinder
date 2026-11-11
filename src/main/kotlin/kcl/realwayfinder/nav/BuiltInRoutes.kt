@@ -29,7 +29,8 @@ object BuiltInRoutes {
 	val islandSpawns = mapOf(
 		"I1" to ScanPoint(-155, 150, 260),
 		"I2" to ScanPoint(1871, 150, 684),
-		"I3" to ScanPoint(1860, 151, 1684)
+		"I3" to ScanPoint(1860, 151, 1684),
+		"I5" to ScanPoint(-192, 151, 1921)
 	)
 
 	private val islands = mapOf(
@@ -85,6 +86,13 @@ object BuiltInRoutes {
 			ScanPoint(901, 150, 1707),
 			ScanPoint(942, 150, 1751),
 			ScanPoint(901, 150, 1754)
+		),
+		"I5" to listOf(
+			ScanPoint(-192, 151, 1921),
+			ScanPoint(-150, 150, 1914),
+			ScanPoint(-243, 150, 1680),
+			ScanPoint(-279, 149, 1945),
+			ScanPoint(-388, 150, 1807)
 		)
 	)
 

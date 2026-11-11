@@ -92,6 +92,9 @@ public class PrecomputedData {
             blockData = fillData(id, state);
         }
 
+        if (MovementHelper.fenceBlocksColumn(bsi, x, y, z, state)) {
+            return false;
+        }
         if ((blockData & CAN_WALK_THROUGH_MAYBE_MASK) != 0) {
             return MovementHelper.canWalkThroughPosition(bsi, x, y, z, state);
         } else {
@@ -107,6 +110,9 @@ public class PrecomputedData {
             blockData = fillData(id, state);
         }
 
+        if (MovementHelper.fenceBlocksColumn(bsi, x, y, z, state)) {
+            return false;
+        }
         if ((blockData & FULLY_PASSABLE_MAYBE_MASK) != 0) {
             return MovementHelper.fullyPassablePosition(bsi, x, y, z, state);
         } else {

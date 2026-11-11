@@ -143,6 +143,10 @@ public interface MovementHelper extends ActionCosts, Helper {
         if (block instanceof AirBlock) {
             return YES;
         }
+        // Fences are 1.5 tall. The body cannot enter the fence cell.
+        if (block instanceof FenceBlock) {
+            return NO;
+        }
         if (block instanceof BaseFireBlock || block == Blocks.COBWEB || block == Blocks.END_PORTAL || block == Blocks.COCOA || block instanceof AbstractSkullBlock || block == Blocks.BUBBLE_COLUMN || block instanceof ShulkerBoxBlock || block instanceof SlabBlock || block instanceof TrapDoorBlock || block == Blocks.HONEY_BLOCK || block == Blocks.END_ROD || block == Blocks.SWEET_BERRY_BUSH || block == Blocks.POINTED_DRIPSTONE || block instanceof AmethystClusterBlock || block instanceof AzaleaBlock) {
             return NO;
         }
@@ -249,6 +253,9 @@ public interface MovementHelper extends ActionCosts, Helper {
         Block block = state.getBlock();
         if (block instanceof AirBlock) { // early return for most common case
             return YES;
+        }
+        if (block instanceof FenceBlock) {
+            return NO;
         }
         // exceptions - blocks that are isPassable true, but we can't actually jump through
         if (block instanceof BaseFireBlock
@@ -383,10 +390,19 @@ public interface MovementHelper extends ActionCosts, Helper {
         return (facing == playerFacing) == open;
     }
 
+    /** A fence fills its own cell and the bottom half of the cell above it. */
+    static boolean fenceBlocksColumn(BlockStateInterface bsi, int x, int y, int z, BlockState state) {
+        if (state.getBlock() instanceof FenceBlock) {
+            return true;
+        }
+        return bsi.get0(x, y - 1, z).getBlock() instanceof FenceBlock;
+    }
+
     static boolean avoidWalkingInto(BlockState state) {
         Block block = state.getBlock();
         return !state.getFluidState().isEmpty()
                 || block == Blocks.MAGMA_BLOCK
+                || block instanceof FenceBlock
                 || block == Blocks.CACTUS
                 || block == Blocks.SWEET_BERRY_BUSH
                 || block instanceof BaseFireBlock

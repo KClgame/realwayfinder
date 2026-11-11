@@ -36,7 +36,11 @@ import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents
 import net.minecraft.client.KeyMapping
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.ChatScreen
+import net.minecraft.client.gui.screens.ConnectScreen
+import net.minecraft.client.gui.screens.DisconnectedScreen
 import net.minecraft.client.gui.screens.PauseScreen
+import net.minecraft.client.multiplayer.ServerData
+import net.minecraft.client.multiplayer.resolver.ServerAddress
 import net.minecraft.network.chat.Component
 import org.lwjgl.glfw.GLFW
 import kotlin.math.floor
@@ -53,6 +57,10 @@ object RouteRuntime {
 	private var lastClearMs = 0L
 	private var lastHubMs = 0L
 	private var closeHubTicks = 0
+	private var lastServer: ServerData? = null
+	private var reconnectTicks = -1
+	private var reconnectAttempts = 0
+	private var reconnectNote = false
 	private val dock = CastDock()
 	private val runner = PathRunner()
 	private var resumeAfterSpawn = false
@@ -118,7 +126,14 @@ object RouteRuntime {
 			awaitJoin = true
 			joinTicks = -1
 			MenuClicker.cancel(client)
+			considerReconnect(client)
 			return
+		}
+		rememberServer(client)
+		if (reconnectNote) {
+			reconnectNote = false
+			reconnectAttempts = 0
+			player.sendSystemMessage(Component.literal("Realwayfinder 已重连"))
 		}
 		if (awaitJoin) {
 			awaitJoin = false
@@ -462,6 +477,31 @@ object RouteRuntime {
 		closeHubTicks = 40
 		client.gui.setScreen(null)
 		player.sendSystemMessage(Component.literal("Realwayfinder /hub"))
+	}
+
+	private fun rememberServer(client: Minecraft) {
+		val server = client.currentServer ?: return
+		if (server.ip.isNullOrBlank()) return
+		lastServer = server
+	}
+
+	/** A dropped multiplayer session comes back after five seconds. Five tries, then it stops. */
+	private fun considerReconnect(client: Minecraft) {
+		val screen = client.gui.screen()
+		if (screen is ConnectScreen) return
+		if (!RouteSettings.enabled || screen !is DisconnectedScreen) {
+			reconnectTicks = -1
+			return
+		}
+		val server = lastServer
+		if (server == null || server.ip.isNullOrBlank() || reconnectAttempts >= 5) return
+		if (reconnectTicks < 0) reconnectTicks = 0
+		reconnectTicks++
+		if (reconnectTicks < 100) return
+		reconnectTicks = -1
+		reconnectAttempts++
+		reconnectNote = true
+		ConnectScreen.startConnecting(screen, client, ServerAddress.parseString(server.ip), server, false, null)
 	}
 
 	private fun closeHubChat(client: Minecraft) {

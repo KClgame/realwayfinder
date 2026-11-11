@@ -1,6 +1,6 @@
 # Realwayfinder
 
-**v1.2.4** · Minecraft **26.2** · Fabric · 纯客户端
+**v1.2.5** · Minecraft **26.2** · Fabric · 纯客户端
 
 在 MCC Island 上按优先级选钓鱼点、扫点、走到站位并抛竿。行走使用编进本 jar 的 Baritone 26.2（提交 `9fadf7cf`，LGPL-3.0）。不要再另装 Baritone。
 
