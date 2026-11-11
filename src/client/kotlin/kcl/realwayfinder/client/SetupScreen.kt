@@ -2,8 +2,6 @@ package kcl.realwayfinder.client
 
 import kcl.realwayfinder.nav.FishTarget
 import kcl.realwayfinder.nav.GrottoKind
-import kcl.realwayfinder.nav.IslandOc
-import kcl.realwayfinder.nav.islandOc
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.components.Tooltip
@@ -60,14 +58,13 @@ class SetupScreen : Screen(Component.literal("Realwayfinder")) {
 	}
 
 	private fun openFish(target: FishTarget) {
-		val oc = islandOc(target)
-		val triple = OverclockFile.island(oc)
-		minecraft.gui.setScreen(OverclockPage(this, "${fishName(target)} · ${ocName(oc)}", target in RouteSettings.fishTargets, triple, {
+		val triple = OverclockFile.fish(target)
+		minecraft.gui.setScreen(OverclockPage(this, fishName(target), target in RouteSettings.fishTargets, triple, {
 			if (target in RouteSettings.fishTargets) RouteSettings.fishTargets.remove(target) else RouteSettings.fishTargets.add(target)
 			RouteSettings.save()
 			openFish(target)
 		}) { next ->
-			OverclockFile.setIsland(oc, next)
+			OverclockFile.setFish(target, next)
 			openFish(target)
 		})
 	}
@@ -156,14 +153,6 @@ class SetupScreen : Screen(Component.literal("Realwayfinder")) {
 		FishTarget.PEARL -> "Pearl"
 		FishTarget.TREASURE -> "Treasure"
 		FishTarget.SPIRIT -> "Spirit"
-	}
-
-	private fun ocName(kind: IslandOc): String = when (kind) {
-		IslandOc.FISH -> "Fish"
-		IslandOc.XP_WAYFINDER -> "XP/Wayfinder"
-		IslandOc.PEARL -> "Pearl"
-		IslandOc.TREASURE -> "Treasure"
-		IslandOc.SPIRIT -> "Spirit"
 	}
 
 	private fun grottoScanned(): String =

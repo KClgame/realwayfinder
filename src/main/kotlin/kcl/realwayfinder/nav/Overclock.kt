@@ -20,17 +20,13 @@ fun UnstablePick.perkName(): String? = when (this) {
 	UnstablePick.SPIRIT -> "Spirit Chance"
 }
 
-fun UnstablePick.menuLabel(): String = when (this) {
-	UnstablePick.OFF -> "不启用"
-	UnstablePick.ELUSIVE -> "难鱼"
-	UnstablePick.WAYFINDER -> "寻路数据"
-	UnstablePick.PEARL -> "珍珠"
-	UnstablePick.TREASURE -> "宝藏"
-	UnstablePick.SPIRIT -> "魂"
-}
+fun UnstablePick.menuLabel(): String = perkName() ?: "不启用"
+
+enum class UnstablePhase { READY, ACTIVE, COOLING }
 
 data class UnstableRead(
 	val perk: UnstablePick?,
+	val phase: UnstablePhase,
 	val durationMs: Long?,
 	val cooldownMs: Long?,
 	val activeLeftMs: Long?,
@@ -46,33 +42,49 @@ fun isUnstableItem(name: String, lore: List<String>): Boolean {
 fun nextUnstableUse(enabledAtMs: Long, durationMs: Long, cooldownMs: Long): Long =
 	enabledAtMs + durationMs + cooldownMs
 
+private val activeLine = Regex("""currently active!\s*(.+?)\s*remaining""", RegexOption.IGNORE_CASE)
+private val coolingLine = Regex("""on cooldown!\s*(.+?)\s*remaining""", RegexOption.IGNORE_CASE)
+
 /**
- * Reads whichever lines the item actually shows.
- * A line with Duration or Cooldown is the stat. Remaining or left on that line is time still running.
+ * Not enabled and cooling: "On cooldown! 12m remaining."
+ * Enabled: "Currently active! 5m remaining."
+ * Usable when neither sentence is present. `xm` is minutes.
  */
 fun readUnstable(lines: List<String>): UnstableRead {
 	val plain = lines.map { it.replace(Regex("§."), "").trim() }.filter { it.isNotEmpty() }
+	val blob = plain.joinToString("\n")
+	val active = activeLine.find(blob)
+	val cooling = coolingLine.find(blob)
+	val phase = when {
+		active != null -> UnstablePhase.ACTIVE
+		cooling != null -> UnstablePhase.COOLING
+		else -> UnstablePhase.READY
+	}
 	var perk: UnstablePick? = null
 	var duration: Long? = null
 	var cooldown: Long? = null
-	var activeLeft: Long? = null
-	var cooldownLeft: Long? = null
 	val mentioned = plain.mapNotNull { unstablePerkIn(it) }.distinct()
 	for (line in plain) {
 		val lower = line.lowercase()
+		if (activeLine.containsMatchIn(line) || coolingLine.containsMatchIn(line)) continue
 		val picked = unstablePerkIn(line)
-		val marked = ">" in line || "selected" in lower || "current" in lower || "active" in lower
+		val marked = ">" in line || "selected" in lower || "current" in lower
 		if (picked != null && marked) perk = picked
 		val times = sumTimes(line) ?: continue
-		val remaining = "remain" in lower || "left" in lower
 		when {
-			"duration" in lower || "lasts" in lower -> if (remaining) activeLeft = times else duration = times
-			"cooldown" in lower || "cool down" in lower -> if (remaining) cooldownLeft = times else cooldown = times
-			remaining || "active" in lower -> activeLeft = times
+			"duration" in lower || "lasts" in lower -> duration = times
+			"cooldown" in lower -> cooldown = times
 		}
 	}
 	if (perk == null && mentioned.size == 1) perk = mentioned[0]
-	return UnstableRead(perk, duration, cooldown, activeLeft, cooldownLeft)
+	return UnstableRead(
+		perk,
+		phase,
+		duration,
+		cooldown,
+		active?.let { sumTimes(it.groupValues[1]) },
+		cooling?.let { sumTimes(it.groupValues[1]) }
+	)
 }
 
 private fun unstablePerkIn(line: String): UnstablePick? {

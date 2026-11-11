@@ -30,7 +30,6 @@ import kcl.realwayfinder.nav.grottoPrefer
 import kcl.realwayfinder.nav.normalPrefer
 import kcl.realwayfinder.nav.grottoKindOf
 import kcl.realwayfinder.nav.islandLead
-import kcl.realwayfinder.nav.islandOc
 import kcl.realwayfinder.nav.islandSpotQualifies
 import kcl.realwayfinder.nav.normalRank
 import kcl.spotfilter.client.data.FishingSpot
@@ -367,8 +366,7 @@ object RoutePlanner {
 			RouteSettings.fishTargets,
 			xp
 		) ?: return null
-		val oc = islandOc(lead)
-		return "island:${oc.name}" to OverclockFile.island(oc)
+		return "fish:${lead.name}" to OverclockFile.fish(lead)
 	}
 
 	private fun grottoRank(spot: FishingSpot, order: List<GrottoKind>, enabled: Set<GrottoKind>): GrottoRank? {

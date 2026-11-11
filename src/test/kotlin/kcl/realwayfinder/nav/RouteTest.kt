@@ -1027,27 +1027,23 @@ class RouteTest {
 		assertEquals(0, clicksUntil(HOOK_NAMES, "Strong Hook", "Strong Hook"))
 		assertEquals(HookPick.WISE, advance(HookPick.entries, HookPick.STRONG))
 		assertEquals(HookPick.KEEP, advance(HookPick.entries, HookPick.LUCKY))
-		val sample = listOf(
-			"Unstable Overclock",
-			"Selected: Elusive Fish Chance",
-			"Duration: 5m",
-			"Cooldown: 45 minutes"
-		)
-		val read = readUnstable(sample)
-		assertEquals(UnstablePick.ELUSIVE, read.perk)
-		assertEquals(5L * 60_000L, read.durationMs)
-		assertEquals(45L * 60_000L, read.cooldownMs)
-		assertEquals(null, read.activeLeftMs)
+		val ready = readUnstable(listOf("Unstable Overclock", "> Elusive Fish Chance"))
+		assertEquals(UnstablePhase.READY, ready.phase)
+		assertEquals(UnstablePick.ELUSIVE, ready.perk)
+		assertEquals(null, ready.activeLeftMs)
+		assertEquals(null, ready.cooldownLeftMs)
 		val running = readUnstable(listOf(
-			"Active: Wayfinder Data",
-			"Duration remaining: 4m 10s",
+			"> Wayfinder Data",
+			"Currently active! 4m 10s remaining.",
 			"Cooldown: 45m"
 		))
+		assertEquals(UnstablePhase.ACTIVE, running.phase)
 		assertEquals(UnstablePick.WAYFINDER, running.perk)
 		assertEquals(4L * 60_000L + 10_000L, running.activeLeftMs)
 		assertEquals(45L * 60_000L, running.cooldownMs)
-		val cooling = readUnstable(listOf("Cooldown remaining: 12m 5s"))
-		assertEquals(12L * 60_000L + 5_000L, cooling.cooldownLeftMs)
+		val cooling = readUnstable(listOf("On cooldown! 12m remaining."))
+		assertEquals(UnstablePhase.COOLING, cooling.phase)
+		assertEquals(12L * 60_000L, cooling.cooldownLeftMs)
 		assertEquals(1_000L + 50L * 60_000L, nextUnstableUse(1_000L, 5L * 60_000L, 45L * 60_000L))
 		assertTrue(isUnstableItem("Unstable Overclock", listOf("Duration: 5m")))
 		assertTrue(!isUnstableItem("Wise Hook", listOf("Overclocked Perk:", "> Wise Hook")))

@@ -302,6 +302,19 @@ object MenuClicker {
 		}
 		val read = readUnstable(lore(slot.item))
 		UnstableSchedule.absorb(read)
+		val screen = client.gui.screen() as? AbstractContainerScreen<*>
+		if (screen == null) {
+			fail(client, player, "Unstable 界面不在")
+			return
+		}
+		if (read.phase != kcl.realwayfinder.nav.UnstablePhase.READY) {
+			val now = System.currentTimeMillis()
+			val waitMs = (UnstableSchedule.readyAtMs - now).coerceAtLeast(0L)
+			val state = if (read.phase == kcl.realwayfinder.nav.UnstablePhase.ACTIVE) "启用中" else "冷却中"
+			player.sendSystemMessage(Component.literal("Realwayfinder Unstable $state，下次 ${waitText(waitMs)}"))
+			step = Step.CLOSE
+			return
+		}
 		val wantedName = wanted.unstable.perkName()
 		val currentName = read.perk?.perkName()
 		if (currentName != wantedName) {
@@ -311,35 +324,17 @@ object MenuClicker {
 				step = Step.CLOSE
 				return
 			}
-			containerClick(client, player, slot.index, 1, ContainerInput.PICKUP)
+			rightClickSlot(screen, slot)
 			clickGap = 20
-			return
-		}
-		val now = System.currentTimeMillis()
-		if (!UnstableSchedule.ready(now) || read.activeLeftMs != null || read.cooldownLeftMs != null) {
-			val waitMs = (UnstableSchedule.readyAtMs - now).coerceAtLeast(0L)
-			player.sendSystemMessage(Component.literal("Realwayfinder Unstable 下次可用 ${waitText(waitMs)}"))
-			step = Step.CLOSE
-			return
-		}
-		val duration = read.durationMs
-		val cooldown = read.cooldownMs
-		if (duration == null || cooldown == null) {
-			UnstableSchedule.holdUntil(now + 30_000L)
-			player.sendSystemMessage(Component.literal("Realwayfinder 没读到 Unstable 的持续时间或冷却"))
-			step = Step.CLOSE
 			return
 		}
 		if (!unstableArmed) {
 			containerClick(client, player, slot.index, 0, ContainerInput.QUICK_MOVE)
-			UnstableSchedule.arm(now, duration, cooldown)
 			unstableArmed = true
 			clickGap = 20
-			player.sendSystemMessage(Component.literal(
-				"Realwayfinder Unstable 已启用 ${wanted.unstable.menuLabel()}，下次 ${waitText(duration + cooldown)}"
-			))
 			return
 		}
+		player.sendSystemMessage(Component.literal("Realwayfinder Unstable 已启用 ${wanted.unstable.menuLabel()}"))
 		step = Step.CLOSE
 	}
 

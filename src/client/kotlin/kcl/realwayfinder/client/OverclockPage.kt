@@ -40,7 +40,7 @@ class OverclockPage(
 		addRenderableWidget(button(8, 120, "Rod：${label(triple.rod.perkName())}", "左键切到下一项。保持表示不改游戏里的 Rod") {
 			onChange(triple.copy(rod = advance(RodPick.entries, triple.rod)))
 		})
-		addRenderableWidget(button(8, 144, "Unstable：${triple.unstable.menuLabel()}", "左键切换，含不启用。游戏里右键切换加成，Shift+左键启用。不要求和钓点的 Hook 一致。") {
+		addRenderableWidget(button(8, 144, "Unstable：${triple.unstable.menuLabel()}", "左键切换，含不启用。游戏里右键切换加成，Shift+左键才启用。") {
 			onChange(triple.copy(unstable = advance(UnstablePick.entries, triple.unstable)))
 		})
 		addRenderableWidget(Button.builder(Component.literal("返回")) { _ -> onClose() }.bounds(8, 176, 80, 20).build())

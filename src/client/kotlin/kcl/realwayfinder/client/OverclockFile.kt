@@ -1,8 +1,8 @@
 package kcl.realwayfinder.client
 
+import kcl.realwayfinder.nav.FishTarget
 import kcl.realwayfinder.nav.GrottoKind
 import kcl.realwayfinder.nav.HookPick
-import kcl.realwayfinder.nav.IslandOc
 import kcl.realwayfinder.nav.MagnetPick
 import kcl.realwayfinder.nav.RodPick
 import kcl.realwayfinder.nav.UnstablePick
@@ -45,6 +45,7 @@ object UnstableSchedule {
 		val cooldownLeft = read.cooldownLeftMs
 		val until = when {
 			activeLeft != null && cooldown != null -> now + activeLeft + cooldown
+			activeLeft != null -> now + activeLeft
 			cooldownLeft != null -> now + cooldownLeft
 			else -> return
 		}
@@ -54,15 +55,15 @@ object UnstableSchedule {
 
 object OverclockFile {
 	private val path = FabricLoader.getInstance().configDir.resolve("realwayfinder").resolve("overclock.txt")
-	private val island = linkedMapOf<IslandOc, OcTriple>()
+	private val fish = linkedMapOf<FishTarget, OcTriple>()
 	private val grotto = linkedMapOf<GrottoKind, OcTriple>()
 
-	fun island(kind: IslandOc): OcTriple = island[kind] ?: kept()
+	fun fish(target: FishTarget): OcTriple = fish[target] ?: kept()
 
 	fun grotto(kind: GrottoKind): OcTriple = grotto[kind] ?: kept()
 
-	fun setIsland(kind: IslandOc, triple: OcTriple) {
-		island[kind] = triple
+	fun setFish(target: FishTarget, triple: OcTriple) {
+		fish[target] = triple
 		save()
 	}
 
@@ -72,10 +73,12 @@ object OverclockFile {
 	}
 
 	fun load() {
-		island.clear()
+		fish.clear()
 		grotto.clear()
 		UnstableSchedule.readyAtMs = 0
 		if (!Files.exists(path)) return
+		val legacy = ArrayList<Triple<String, String, String>>()
+		val explicit = HashSet<FishTarget>()
 		for (line in Files.readAllLines(path, StandardCharsets.UTF_8)) {
 			val parts = line.split('=', limit = 2)
 			if (parts.size != 2) continue
@@ -87,16 +90,34 @@ object OverclockFile {
 			}
 			if (key.size != 3) continue
 			when (key[0]) {
-				"island" -> {
-					val kind = enumOr<IslandOc>(key[1], null) ?: continue
-					island[kind] = writePart(island(kind), key[2], saved)
+				"fish" -> {
+					val target = enumOr<FishTarget>(key[1], null) ?: continue
+					explicit.add(target)
+					fish[target] = writePart(fish(target), key[2], saved)
 				}
 				"grotto" -> {
 					val kind = enumOr<GrottoKind>(key[1], null) ?: continue
 					grotto[kind] = writePart(grotto(kind), key[2], saved)
 				}
+				"island" -> legacy.add(Triple(key[1], key[2], saved))
 			}
 		}
+		for ((group, part, saved) in legacy) {
+			for (target in legacyTargets(group)) {
+				if (target in explicit) continue
+				fish[target] = writePart(fish[target] ?: kept(), part, saved)
+			}
+		}
+	}
+
+	/** Older files stored one page for several targets. Each target now keeps its own copy. */
+	private fun legacyTargets(group: String): List<FishTarget> = when (group.uppercase()) {
+		"FISH" -> listOf(FishTarget.WISE, FishTarget.STRONG, FishTarget.ELUSIVE)
+		"XP_WAYFINDER" -> listOf(FishTarget.XP, FishTarget.WAYFINDER)
+		"PEARL" -> listOf(FishTarget.PEARL)
+		"TREASURE" -> listOf(FishTarget.TREASURE)
+		"SPIRIT" -> listOf(FishTarget.SPIRIT)
+		else -> emptyList()
 	}
 
 	private fun writePart(current: OcTriple, part: String, raw: String): OcTriple = when (part) {
@@ -111,12 +132,12 @@ object OverclockFile {
 	fun save() {
 		Files.createDirectories(path.parent)
 		val text = buildString {
-			for (kind in IslandOc.entries) {
-				val triple = island(kind)
-				append("island.").append(kind.name).append(".hook=").append(triple.hook.name).append('\n')
-				append("island.").append(kind.name).append(".magnet=").append(triple.magnet.name).append('\n')
-				append("island.").append(kind.name).append(".rod=").append(triple.rod.name).append('\n')
-				append("island.").append(kind.name).append(".unstable=").append(triple.unstable.name).append('\n')
+			for (target in FishTarget.entries) {
+				val triple = fish(target)
+				append("fish.").append(target.name).append(".hook=").append(triple.hook.name).append('\n')
+				append("fish.").append(target.name).append(".magnet=").append(triple.magnet.name).append('\n')
+				append("fish.").append(target.name).append(".rod=").append(triple.rod.name).append('\n')
+				append("fish.").append(target.name).append(".unstable=").append(triple.unstable.name).append('\n')
 			}
 			for (kind in GrottoKind.entries) {
 				val triple = grotto(kind)
