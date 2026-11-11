@@ -39,6 +39,7 @@ import net.minecraft.client.gui.screens.ChatScreen
 import net.minecraft.client.gui.screens.ConnectScreen
 import net.minecraft.client.gui.screens.DisconnectedScreen
 import net.minecraft.client.gui.screens.PauseScreen
+import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.multiplayer.ServerData
 import net.minecraft.client.multiplayer.resolver.ServerAddress
 import net.minecraft.network.chat.Component
@@ -56,7 +57,7 @@ object RouteRuntime {
 	private var phase = Phase.SEEK
 	private var lastClearMs = 0L
 	private var lastHubMs = 0L
-	private var closeHubTicks = 0
+	private var hubSubmitTicks = 0
 	private var lastServer: ServerData? = null
 	private var reconnectTicks = -1
 	private var reconnectAttempts = 0
@@ -111,7 +112,7 @@ object RouteRuntime {
 
 	fun tick() {
 		val client = Minecraft.getInstance()
-		closeHubChat(client)
+		submitHubChat(client)
 		val player = client.player
 		val level = client.level
 		if (player == null || level == null) {
@@ -471,12 +472,10 @@ object RouteRuntime {
 		if (now - lastHubMs < 5000) return
 		lastHubMs = now
 		val client = Minecraft.getInstance()
-		val player = client.player ?: return
-		client.gui.setScreen(net.minecraft.client.gui.screens.ChatScreen("/hub", true))
-		player.connection.sendCommand("hub")
-		closeHubTicks = 40
-		client.gui.setScreen(null)
-		player.sendSystemMessage(Component.literal("Realwayfinder /hub"))
+		if (client.player == null) return
+		client.gui.setScreen(ChatScreen("/hub", false))
+		hubSubmitTicks = 8
+		client.player?.sendSystemMessage(Component.literal("Realwayfinder /hub"))
 	}
 
 	private fun rememberServer(client: Minecraft) {
@@ -504,10 +503,17 @@ object RouteRuntime {
 		ConnectScreen.startConnecting(screen, client, ServerAddress.parseString(server.ip), server, false, null)
 	}
 
-	private fun closeHubChat(client: Minecraft) {
-		if (closeHubTicks <= 0) return
-		closeHubTicks--
-		if (client.gui.screen() is ChatScreen) client.gui.setScreen(null)
+	/** Enter submits the open chat and closes it. Closing the screen alone leaves the chat up. */
+	private fun submitHubChat(client: Minecraft) {
+		if (hubSubmitTicks <= 0) return
+		val screen = client.gui.screen() as? ChatScreen
+		if (screen == null) {
+			hubSubmitTicks--
+			if (hubSubmitTicks > 0) client.gui.setScreen(ChatScreen("/hub", false))
+			return
+		}
+		screen.keyPressed(KeyEvent(GLFW.GLFW_KEY_ENTER, 0, 0))
+		if (client.gui.screen() is ChatScreen) hubSubmitTicks-- else hubSubmitTicks = 0
 	}
 
 	fun onChat(text: String) {
@@ -1159,9 +1165,13 @@ object RouteRuntime {
 		if (joinTicks >= 0) return
 		val inLobby = lobby(client)
 		if (!inLobby) toldNoDestination = false
+		if (MenuClicker.idle() && hubSubmitTicks <= 0 && (inLobby || travelNow || forcedDest != null)) {
+			MenuClicker.dismissStray(client, player)
+		}
 		MenuClicker.tick(client, player)
 		if (!MenuClicker.idle() || ownScreen(client)) return
-		if (client.gui.screen() != null) return
+		val screen = client.gui.screen()
+		if (screen != null && screen !is net.minecraft.client.gui.screens.inventory.InventoryScreen) return
 		if (inLobby || travelNow || forcedDest != null) {
 			if (travelCooldown > 0) {
 				travelCooldown--

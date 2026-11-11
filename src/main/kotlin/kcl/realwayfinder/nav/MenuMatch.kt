@@ -17,6 +17,10 @@ val PLACE_BUTTONS = listOf(
 	PlaceButton("BARREN", listOf("Barren Grotto", "Volcanic Springs", "Barren"), "grotto_barren")
 )
 
+/** Compass inventory and the navigator or island chest stay open. Pause, chat, and other screens do not. */
+fun keepLobbyContainer(hasFishingNav: Boolean, hasIslandIcon: Boolean): Boolean =
+	hasFishingNav || hasIslandIcon
+
 fun lobbyScoreboard(text: String): Boolean {
 	val cleaned = text.replace(Regex("§."), "")
 	return cleaned.contains("MCCI: MAIN ISLAND", ignoreCase = true)

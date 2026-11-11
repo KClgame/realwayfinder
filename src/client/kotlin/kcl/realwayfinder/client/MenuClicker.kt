@@ -10,7 +10,9 @@ import kcl.realwayfinder.nav.menuLabel
 import kcl.realwayfinder.nav.readUnstable
 import kcl.realwayfinder.nav.clicksUntil
 import kcl.realwayfinder.nav.isAnglrPanel
+import kcl.realwayfinder.nav.echoShardPlace
 import kcl.realwayfinder.nav.isFishingNav
+import kcl.realwayfinder.nav.keepLobbyContainer
 import kcl.realwayfinder.nav.isFishingSupplies
 import kcl.realwayfinder.nav.islandMenuSlot
 import kcl.realwayfinder.nav.isTravelCompass
@@ -94,6 +96,30 @@ object MenuClicker {
 		unstableTries = 0
 		unstableArmed = false
 		hud = "Overclock 调整中"
+	}
+
+	/**
+	 * Lobby travel may leave the inventory, the navigator, or the island chest open.
+	 * Pause, chat, and every other screen is closed.
+	 */
+	fun dismissStray(client: Minecraft, player: Player) {
+		val screen = client.gui.screen() ?: return
+		if (screen is InventoryScreen || isNavigatorOrIsland(player)) return
+		tapEscape(client)
+	}
+
+	fun isNavigatorOrIsland(player: Player): Boolean {
+		var fishing = false
+		var island = false
+		for (slot in player.containerMenu.slots) {
+			val stack = slot.item
+			if (stack.isEmpty) continue
+			val name = stack.hoverName.string
+			val lines = lore(stack)
+			if (isFishingNav(name, lines, model(stack))) fishing = true
+			if (echoShardPlace(name, lines) != null) island = true
+		}
+		return keepLobbyContainer(fishing, island)
 	}
 
 	/** Close one open screen. Does nothing when no screen is open, so it does not open the pause menu. */
